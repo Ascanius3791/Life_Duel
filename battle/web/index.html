@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Life Duel</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"><i class="r"></i><i class="g"></i><i class="b"></i><i class="b"></i></span>
+      <span>Life <strong>Duel</strong></span>
+    </div>
+    <div class="phase" id="phaseLabel">Loading…</div>
+    <div class="top-actions">
+      <button class="ghost" id="btnRules" title="Rules (H)">Rules</button>
+      <button class="ghost" id="btnSettings" title="Game settings">Settings</button>
+      <button class="ghost" id="btnNew" title="Start over with empty armies">New game</button>
+    </div>
+  </header>
+
+  <section class="scoreboard" id="scoreboard">
+    <div class="score red">
+      <span class="label">Red</span>
+      <span class="value" id="scoreRed">0</span>
+      <span class="sub" id="scoreRedSub"></span>
+    </div>
+    <div class="tug">
+      <div class="tug-bar"><div class="tug-red" id="tugRed"></div><div class="tug-blue" id="tugBlue"></div></div>
+      <div class="tug-info">
+        <span id="genLabel">Generation 0</span>
+        <span class="dot">·</span>
+        <span id="greyLabel">0 grey</span>
+        <span class="dot">·</span>
+        <span id="rateLabel">—</span>
+      </div>
+      <div class="progress"><div id="genProgress"></div></div>
+    </div>
+    <div class="score blue">
+      <span class="sub" id="scoreBlueSub"></span>
+      <span class="value" id="scoreBlue">0</span>
+      <span class="label">Blue</span>
+    </div>
+  </section>
+
+  <main id="stage">
+    <canvas id="board"></canvas>
+    <div class="board-hint" id="boardHint"></div>
+  </main>
+
+  <footer class="dock">
+    <!-- Red player's side -->
+    <section class="side red" id="sideRed" data-owner="red">
+      <div class="side-head">
+        <h2>Red</h2>
+        <div class="budget"><div class="budget-bar"><div class="budget-fill"></div></div><span class="budget-text"></span></div>
+        <div class="orient" role="group" aria-label="Orientation">
+          <button class="icon" data-act="rotl" title="Rotate left (Shift+R)">↺</button>
+          <button class="icon" data-act="rotr" title="Rotate right (R)">↻</button>
+          <button class="icon" data-act="mirror" title="Mirror left/right (F)">⇋</button>
+          <button class="icon" data-act="vflip" title="Mirror up/down (V)">⇅</button>
+        </div>
+      </div>
+      <div class="cards"></div>
+      <div class="side-foot">
+        <button class="ghost small" data-act="undo" title="Remove the last placed pattern (Ctrl+Z)">Undo</button>
+        <button class="ghost small" data-act="clear">Clear</button>
+        <button class="ready" data-act="ready">Ready</button>
+      </div>
+      <div class="side-stats">
+        <div class="big"><span class="count">0</span><span class="unit">cells</span></div>
+        <canvas class="spark"></canvas>
+      </div>
+    </section>
+
+    <!-- Centre: battlefield set-up during preparation, playback during battle -->
+    <section class="center" id="centerPrep">
+      <h3>Battlefield</h3>
+      <div class="row">
+        <select id="presetSelect" aria-label="Battlefield preset"></select>
+        <button class="icon" id="btnReroll" title="New random seed">⟳</button>
+      </div>
+      <div class="row" id="countRow">
+        <label for="countInput">Grey cells</label>
+        <input type="range" id="countRange" min="0" max="4000" step="50">
+        <input type="number" id="countInput" min="0" max="20000" step="50">
+      </div>
+      <p class="muted" id="presetDesc"></p>
+      <button class="start" id="btnStart" disabled>Start battle</button>
+    </section>
+
+    <section class="center" id="centerBattle" hidden>
+      <div class="transport">
+        <button class="icon big" id="btnRestart" title="Replay from generation 0">⏮</button>
+        <button class="icon big primary" id="btnPlay" title="Play / pause (Space)">⏸</button>
+        <button class="icon big" id="btnStep" title="One generation (→)">⏵|</button>
+        <button class="turbo" id="btnTurbo" title="Compute as fast as C++ can (M)"><span>⚡</span> Max</button>
+        <button class="icon big" id="btnSkip" title="Jump straight to the result">⏭</button>
+      </div>
+      <div class="speed" id="speedControl">
+        <div class="speed-read"><span id="speedValue">30</span><small> gen/s</small></div>
+        <div class="speed-track" id="speedTrack" tabindex="0" role="slider" aria-label="Simulation speed"
+             aria-valuemin="1" aria-valuemax="1000">
+          <div class="speed-fill" id="speedFill"></div>
+          <div class="speed-thumb" id="speedThumb"></div>
+          <div class="speed-ticks"><span>1</span><span>10</span><span>100</span><span>1000</span></div>
+        </div>
+      </div>
+      <button class="ghost small" id="btnBackToPrep">Back to preparation</button>
+    </section>
+
+    <!-- Blue player's side -->
+    <section class="side blue" id="sideBlue" data-owner="blue">
+      <div class="side-head">
+        <h2>Blue</h2>
+        <div class="budget"><div class="budget-bar"><div class="budget-fill"></div></div><span class="budget-text"></span></div>
+        <div class="orient" role="group" aria-label="Orientation">
+          <button class="icon" data-act="rotl" title="Rotate left (Shift+R)">↺</button>
+          <button class="icon" data-act="rotr" title="Rotate right (R)">↻</button>
+          <button class="icon" data-act="mirror" title="Mirror left/right (F)">⇋</button>
+          <button class="icon" data-act="vflip" title="Mirror up/down (V)">⇅</button>
+        </div>
+      </div>
+      <div class="cards"></div>
+      <div class="side-foot">
+        <button class="ghost small" data-act="undo" title="Remove the last placed pattern (Ctrl+Z)">Undo</button>
+        <button class="ghost small" data-act="clear">Clear</button>
+        <button class="ready" data-act="ready">Ready</button>
+      </div>
+      <div class="side-stats">
+        <div class="big"><span class="count">0</span><span class="unit">cells</span></div>
+        <canvas class="spark"></canvas>
+      </div>
+    </section>
+  </footer>
+
+  <!-- Card tooltip -->
+  <div class="tooltip" id="tooltip" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+
+  <!-- Result -->
+  <dialog id="resultDialog" class="modal">
+    <div class="result-banner" id="resultBanner">Red wins</div>
+    <p id="resultReason"></p>
+    <canvas id="resultChart" width="640" height="220"></canvas>
+    <div class="legend"><span class="r">Red</span><span class="b">Blue</span><span class="g">Grey</span></div>
+    <div class="modal-actions">
+      <button class="ghost" id="btnResultView">View board</button>
+      <button class="ghost" id="btnResultReplay">Replay</button>
+      <button class="ghost" id="btnResultEdit">Edit armies</button>
+      <button class="primary" id="btnResultNew">New game</button>
+    </div>
+  </dialog>
+
+  <!-- Skip progress -->
+  <dialog id="skipDialog" class="modal small">
+    <h3>Fast-forwarding…</h3>
+    <div class="progress big"><div id="skipProgress"></div></div>
+    <p class="muted" id="skipText"></p>
+  </dialog>
+
+  <!-- Settings -->
+  <dialog id="settingsDialog" class="modal">
+    <h2>Game settings</h2>
+    <form method="dialog" id="settingsForm">
+      <label class="field">Board size
+        <select name="size" id="setSize"></select>
+      </label>
+      <label class="field">Starting points per player
+        <input type="number" name="budget" id="setBudget" min="1" max="10000">
+      </label>
+      <label class="field">Generation limit
+        <input type="number" name="maxGen" id="setMaxGen" min="10" max="100000" step="10">
+      </label>
+      <fieldset class="field">
+        <legend>Colour rule</legend>
+        <label class="choice"><input type="radio" name="variant" value="birth">
+          <span><b>Birthright</b> — only newborn cells choose a colour. Living cells keep theirs.</span></label>
+        <label class="choice"><input type="radio" name="variant" value="contagion">
+          <span><b>Contagion</b> — surviving cells are re-coloured every generation by the same majority rule.</span></label>
+      </fieldset>
+      <label class="choice"><input type="checkbox" name="blind" id="setBlind">
+        <span><b>Blind placement</b> — players take turns and cannot see each other's army until the battle starts.</span></label>
+      <div class="modal-actions">
+        <button class="ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="primary" value="apply">Apply</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Rules -->
+  <dialog id="rulesDialog" class="modal wide">
+    <h2>How to play</h2>
+    <div class="rules">
+      <section>
+        <h3>The board</h3>
+        <p>Red owns the left fifth, Blue the right fifth. The neutral battlefield in the middle holds <span class="chip g">grey</span> cells.
+           Spend your points on patterns from your arsenal and drop them into your own area.</p>
+      </section>
+      <section>
+        <h3>Life as usual…</h3>
+        <ul>
+          <li>A living cell with <b>2 or 3</b> living neighbours survives, otherwise it dies.</li>
+          <li>A dead cell with <b>exactly 3</b> living neighbours is born.</li>
+          <li>All colours count as "living" for these rules.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>…but with colours</h3>
+        <ul>
+          <li>A newborn cell takes the colour that has <b>more parents</b>: <span class="chip r">red</span> vs <span class="chip b">blue</span>.</li>
+          <li>Grey parents help a cell to be born but never vote.</li>
+          <li>A tie (e.g. 1 red, 1 blue, 1 grey or 3 grey) produces a <span class="chip g">grey</span> cell.</li>
+          <li><b>Contagion</b> variant: surviving cells are re-coloured every generation by the same vote (tie → grey).</li>
+        </ul>
+      </section>
+      <section>
+        <h3>Winning</h3>
+        <ul>
+          <li>Wipe out every cell of the opponent's colour.</li>
+          <li>Otherwise, when the generation limit is reached, more cells wins.</li>
+          <li>If the whole board repeats a previous state, the game ends early and the average number of cells over one cycle decides.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>Controls</h3>
+        <ul>
+          <li><b>Drag</b> a card onto your area, or <b>click</b> a card and then click the board repeatedly. <b>Esc</b> or right-click stops placing.</li>
+          <li><b>R</b> / <b>Shift+R</b> rotate, <b>F</b> mirror left/right, <b>V</b> mirror up/down. The mouse wheel rotates while placing.</li>
+          <li><b>Right-click</b> a placed pattern to remove it and get the points back.</li>
+          <li>During the battle: <b>Space</b> play/pause, <b>→</b> single step, <b>+</b>/<b>−</b> speed, <b>M</b> max speed.</li>
+        </ul>
+      </section>
+    </div>
+    <div class="modal-actions">
+      <button class="primary" id="btnRulesClose">Got it</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

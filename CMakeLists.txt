@@ -1,0 +1,50 @@
+cmake_minimum_required(VERSION 3.16)
+project(GameOfLife LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# --- Shared simulation core -------------------------------------------------
+add_library(gol_core
+  core/src/life.cpp
+  core/src/patterns.cpp
+  core/src/battle.cpp
+)
+target_include_directories(gol_core PUBLIC core/include)
+
+# --- Classic Game of Life with a native GUI (SFML) -------------------------
+find_package(SFML 2.5 COMPONENTS graphics window system QUIET)
+if(SFML_FOUND)
+  add_executable(life_classic classic/main.cpp classic/ui.cpp)
+  target_link_libraries(life_classic PRIVATE gol_core sfml-graphics sfml-window sfml-system)
+  target_compile_definitions(life_classic PRIVATE
+    GOL_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+  add_custom_command(TARGET life_classic POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/assets $<TARGET_FILE_DIR:life_classic>/assets)
+else()
+  message(WARNING "SFML 2.5 not found - skipping life_classic (install libsfml-dev)")
+endif()
+
+# --- 1v1 colour battle, served to the browser -------------------------------
+find_package(Threads REQUIRED)
+add_executable(life_battle battle/main.cpp battle/http_server.cpp)
+target_link_libraries(life_battle PRIVATE gol_core Threads::Threads)
+target_compile_definitions(life_battle PRIVATE
+  GOL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/battle/web")
+add_custom_command(TARGET life_battle POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/battle/web $<TARGET_FILE_DIR:life_battle>/web)
+
+# --- Tests ------------------------------------------------------------------
+enable_testing()
+add_executable(core_tests tests/core_tests.cpp)
+target_link_libraries(core_tests PRIVATE gol_core)
+add_test(NAME core_tests COMMAND core_tests)
