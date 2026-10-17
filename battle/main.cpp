@@ -6,9 +6,12 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -17,6 +20,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -177,15 +181,86 @@ std::string frameJson(const std::string& id, const gol::Battle& b, bool includeB
 }
 
 // ---------------------------------------------------------------------------
+// Bots: leagues trained by life_arena. The server does not interpret them; it
+// serves their JSON export verbatim and the browser picks the armies.
+// ---------------------------------------------------------------------------
+struct Bot {
+    std::string id;    // file name without ".json" (and without the ".txt" of "league.txt.json")
+    std::string path;  // the league's JSON export
+};
+
+bool endsWith(const std::string& s, const std::string& tail) {
+    return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+bool readFile(const std::string& path, std::string& content) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    content = ss.str();
+    return true;
+}
+
+// `path` is a league's JSON export.
+bool addBot(std::vector<Bot>& bots, const std::string& path) {
+    if (::access(path.c_str(), R_OK) != 0) return false;
+    std::string id = std::filesystem::path(path).filename().string();
+    id.resize(id.size() - 5);
+    if (endsWith(id, ".txt")) id.resize(id.size() - 4);
+    const std::string base = id;
+    for (int n = 2; std::any_of(bots.begin(), bots.end(), [&](const Bot& b) { return b.id == id; }); ++n)
+        id = base + "-" + std::to_string(n);  // keep ids unique
+    bots.push_back({id, path});
+    return true;
+}
+
+std::vector<Bot> leaguesIn(const std::string& dir) {
+    std::vector<std::string> files;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        const std::string name = entry.path().string();
+        if (entry.is_regular_file(ec) && endsWith(name, ".json")) files.push_back(name);
+    }
+    std::sort(files.begin(), files.end());
+    std::vector<Bot> bots;
+    for (const auto& f : files) addBot(bots, f);
+    return bots;
+}
+
+std::string botsJson(const std::vector<Bot>& bots) {
+    std::ostringstream o;
+    o << "{\"bots\":[";
+    for (std::size_t i = 0; i < bots.size(); ++i) {
+        if (i) o << ',';
+        o << "{\"id\":\"" << jsonEscape(bots[i].id) << "\"}";
+    }
+    o << "]}";
+    return o.str();
+}
+
+// ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
+std::string executableDir(const char* argv0) {
+    const std::string exe = argv0;
+    const auto slash = exe.rfind('/');
+    return slash == std::string::npos ? "." : exe.substr(0, slash);
+}
+
 std::string findWebDir(const char* argv0) {
-    std::string exeDir = argv0;
-    const auto slash = exeDir.rfind('/');
-    exeDir = slash == std::string::npos ? "." : exeDir.substr(0, slash);
     // Prefer the source tree so edits to the web files show up without rebuilding.
-    for (const std::string& dir : {std::string(GOL_WEB_DIR), exeDir + "/web", std::string("battle/web")}) {
+    for (const std::string& dir : {std::string(GOL_WEB_DIR), executableDir(argv0) + "/web", std::string("battle/web")}) {
         if (::access((dir + "/index.html").c_str(), R_OK) == 0) return dir;
+    }
+    return {};
+}
+
+// The leagues shipped in assets/leagues, looked up the same way as the web files.
+std::string findLeagueDir(const char* argv0) {
+    for (const std::string& dir :
+         {std::string(GOL_LEAGUE_DIR), executableDir(argv0) + "/leagues", std::string("assets/leagues")}) {
+        if (::access(dir.c_str(), R_OK | X_OK) == 0) return dir;
     }
     return {};
 }
@@ -212,6 +287,8 @@ void usage() {
         "  --port N        port to listen on (default 8080)\n"
         "  --host ADDR     address to bind (default 127.0.0.1, use 0.0.0.0 for LAN)\n"
         "  --web DIR       directory containing index.html\n"
+        "  --league FILE   bot league trained by life_arena (FILE or FILE.json), repeatable.\n"
+        "                  Default: every *.json in the shipped assets/leagues directory\n"
         "  --no-browser    do not open a browser window");
 }
 
@@ -222,11 +299,23 @@ int main(int argc, char** argv) {
     std::string host = "127.0.0.1";
     std::string webDir = findWebDir(argv[0]);
     bool launchBrowser = true;
+    std::vector<Bot> bots;
+    bool leaguesGiven = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--port" && i + 1 < argc) port = std::atoi(argv[++i]);
         else if (arg == "--host" && i + 1 < argc) host = argv[++i];
         else if (arg == "--web" && i + 1 < argc) webDir = argv[++i];
+        else if (arg == "--league" && i + 1 < argc) {
+            // Either the JSON export or the league itself, next to which life_arena writes LEAGUE.json.
+            std::string path = argv[++i];
+            if (!endsWith(path, ".json")) path += ".json";
+            leaguesGiven = true;
+            if (!addBot(bots, path)) {
+                std::fprintf(stderr, "Cannot read %s (the JSON export of a life_arena league).\n", path.c_str());
+                return 1;
+            }
+        }
         else if (arg == "--no-browser") launchBrowser = false;
         else {
             usage();
@@ -236,6 +325,12 @@ int main(int argc, char** argv) {
     if (webDir.empty()) {
         std::fprintf(stderr, "Could not find the web/ directory. Pass it with --web DIR.\n");
         return 1;
+    }
+
+    std::string leagueDir;
+    if (!leaguesGiven) {
+        leagueDir = findLeagueDir(argv[0]);
+        if (!leagueDir.empty()) bots = leaguesIn(leagueDir);
     }
 
     Sessions sessions;
@@ -270,6 +365,21 @@ int main(int argc, char** argv) {
         return Response::json(frameJson(id, session->battle, true));
     });
 
+    server.route("GET", "/api/bots", [&](const Request&) { return Response::json(botsJson(bots)); });
+
+    // A bot's league exactly as life_arena exported it. Read on every request,
+    // so a league that is still being trained can be played against right away.
+    server.route("GET", "/api/bot", [&](const Request& r) {
+        const std::string id = r.param("id");
+        for (const auto& b : bots) {
+            if (b.id != id) continue;
+            std::string content;
+            if (!readFile(b.path, content)) return Response::error(500, "cannot read " + b.path);
+            return Response::json(std::move(content));
+        }
+        return Response::error(404, "unknown bot");
+    });
+
     // Advance a running battle. Either `n` generations or as many as fit into
     // `ms` milliseconds (used by the max-speed and skip-to-end modes).
     server.route("GET", "/api/step", [&](const Request& r) {
@@ -288,6 +398,9 @@ int main(int argc, char** argv) {
                             std::to_string(port) + "/";
     std::printf("Game of Life - Colour Battle\n  serving %s\n  open %s in your browser (Ctrl+C to quit)\n",
                 webDir.c_str(), url.c_str());
+    if (bots.empty()) std::printf("  no bot leagues found, vs Bot mode is off (see --league)\n");
+    else std::printf("  %zu bot league%s%s%s\n", bots.size(), bots.size() == 1 ? "" : "s",
+                     leagueDir.empty() ? "" : " from ", leagueDir.c_str());
     std::fflush(stdout);
     if (launchBrowser) openBrowser(url);
     server.run();

@@ -40,9 +40,11 @@ find_package(Threads REQUIRED)
 add_executable(life_battle battle/main.cpp battle/http_server.cpp)
 target_link_libraries(life_battle PRIVATE gol_core Threads::Threads)
 target_compile_definitions(life_battle PRIVATE
-  GOL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/battle/web")
+  GOL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/battle/web"
+  GOL_LEAGUE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/leagues")
 add_custom_command(TARGET life_battle POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/battle/web $<TARGET_FILE_DIR:life_battle>/web)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/battle/web $<TARGET_FILE_DIR:life_battle>/web
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/assets/leagues $<TARGET_FILE_DIR:life_battle>/leagues)
 
 # --- Bot training: self-play league on a fixed battlefield --------------------
 add_library(gol_arena arena/arena.cpp arena/league.cpp)

@@ -33,6 +33,10 @@ const S = {
   battle: null,
   speed: 30,
   dirty: true,
+  mode: 'duo',          // 'duo': two players at one screen | 'bot': one player against a trained bot
+  bots: [],             // leagues the server offers: [{ id }]
+  bot: { id: null, league: null, side: 'blue', level: 'hard', army: null },
+  duo: null,            // the two-player settings, kept aside while vs Bot mode replaces them
 };
 
 function newSeed() { return Math.floor(Math.random() * 1e9); }
@@ -46,12 +50,17 @@ function loadPrefs() {
     if (p.settings) Object.assign(S.settings, p.settings);
     if (p.field) Object.assign(S.field, { preset: p.field.preset, count: p.field.count });
     if (p.speed) S.speed = p.speed;
+    if (p.mode) S.mode = p.mode;
+    if (p.bot) Object.assign(S.bot, { id: p.bot.id, side: p.bot.side === 'red' ? 'red' : 'blue', level: p.bot.level === 'easy' ? 'easy' : 'hard' });
   } catch { /* storage unavailable */ }
 }
 function savePrefs() {
+  // In vs Bot mode the league dictates the settings; the two-player ones are what is worth keeping.
+  const { settings, field } = S.mode === 'bot' && S.duo ? S.duo : S;
   try {
     localStorage.setItem('lifeDuel.prefs', JSON.stringify({
-      settings: S.settings, field: { preset: S.field.preset, count: S.field.count }, speed: S.speed,
+      settings, field: { preset: field.preset, count: field.count }, speed: S.speed,
+      mode: S.mode, bot: { id: S.bot.id, side: S.bot.side, level: S.bot.level },
     }));
   } catch { /* storage unavailable */ }
 }
@@ -103,15 +112,14 @@ function toast(message) {
 // ---------------------------------------------------------------------------
 // Geometry helpers
 // ---------------------------------------------------------------------------
-function zones() {
-  const { w } = S.settings;
+function zones(w = S.settings.w) {
   const zw = Math.floor(w / 5);
   return { zw, redEnd: zw, blueStart: w - zw };
 }
 
-function zoneRange(owner) {
-  const z = zones();
-  return owner === 'red' ? [0, z.redEnd] : [z.blueStart, S.settings.w];
+function zoneRange(owner, w = S.settings.w) {
+  const z = zones(w);
+  return owner === 'red' ? [0, z.redEnd] : [z.blueStart, w];
 }
 
 const orientCache = new Map();
@@ -140,7 +148,7 @@ const spent = owner => S.placements.reduce((sum, p) => sum + (p.owner === owner 
 const remaining = owner => S.settings.budget - spent(owner);
 
 function isActive(owner) {
-  if (S.phase !== 'prep') return false;
+  if (S.phase !== 'prep' || isBot(owner)) return false;
   return S.settings.blind ? S.turn === owner : !S.ready[owner];
 }
 
@@ -154,6 +162,7 @@ function focusOwner() {
 }
 
 function isHidden(owner) {
+  if (S.mode === 'bot') return S.phase === 'prep' && isBot(owner);
   return S.phase === 'prep' && S.settings.blind && S.turn !== 'done' && S.turn !== owner;
 }
 
@@ -197,10 +206,11 @@ function removePlacement(p) {
   boardChanged();
 }
 
-function prepBoard() {
+// The board as placed so far, plus `extra` placements (the bot's army) that are not part of S.placements.
+function prepBoard(extra = []) {
   const { w } = S.settings;
   const board = S.grey ? S.grey.slice() : new Uint8Array(S.settings.w * S.settings.h);
-  for (const p of S.placements) {
+  for (const p of S.placements.concat(extra)) {
     const v = OWNER_CELL[p.owner];
     for (const [cx, cy] of p.cells) board[(p.y + cy) * w + p.x + cx] = v;
   }
@@ -339,7 +349,7 @@ function drawFog(x, y, w, h, owner) {
   ctx.font = `700 ${14 * dpr}px ${getComputedStyle(document.body).fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(owner === 'red' ? 'RED IS HIDDEN' : 'BLUE IS HIDDEN', x + w / 2, y + h / 2);
+  ctx.fillText(isBot(owner) ? "THE BOT'S ARMY IS HIDDEN" : `${owner.toUpperCase()} IS HIDDEN`, x + w / 2, y + h / 2);
   ctx.restore();
 }
 
@@ -457,6 +467,9 @@ function updateSides() {
     const tab = $(`#tab${cap(owner)}`);
     tab.classList.toggle('open', open);
     tab.disabled = !active;
+    // The bot has no arsenal to open, and its tab would cover the human's zone.
+    tab.hidden = isBot(owner);
+    $('.tab-label', tab).textContent = S.mode === 'bot' ? `${cap(owner)} · you` : cap(owner);
     $('.tab-state', tab).textContent = S.ready[owner] ? 'ready ✓' : (active ? 'arsenal' : 'waiting');
     tab.title = active ? `Open ${cap(owner)}'s arsenal (A)` : (S.ready[owner] ? `${cap(owner)} is ready` : `${cap(owner)} places after ${owner === 'red' ? 'Blue' : 'Red'}`);
     for (const card of $$('.card', side)) {
@@ -491,10 +504,17 @@ function updatePhaseLabel() {
     if (!b) return;
     const f = b.frame;
     if (f.finished) {
-      el.innerHTML = f.winner === 'draw' ? 'Battle over — draw' : `Battle over — ${f.winner === 'red' ? R : B} wins`;
+      const who = S.mode === 'bot' && f.winner !== 'draw' ? (isBot(f.winner) ? ' (the bot)' : ' (you)') : '';
+      el.innerHTML = f.winner === 'draw' ? 'Battle over — draw' : `Battle over — ${f.winner === 'red' ? R : B}${who} wins`;
     } else {
       el.innerHTML = b.turbo ? 'Battle — max speed' : (b.playing ? 'Battle in progress' : 'Battle paused');
     }
+    return;
+  }
+  if (S.mode === 'bot') {
+    const you = humanSide() === 'red' ? R : B;
+    el.innerHTML = S.ready[humanSide()] ? 'Your army is ready — start the battle!'
+      : `Place your army, ${you} — the bot has already chosen its own in secret`;
     return;
   }
   if (S.settings.blind) {
@@ -602,6 +622,11 @@ function resetPreparation({ clearArmies }) {
   S.ready = { red: false, blue: false };
   S.drag = null;
   S.open = 'red';
+  if (S.mode === 'bot') {
+    S.ready[S.bot.side] = true;
+    S.open = humanSide();
+    S.bot.army = pickBotArmy();
+  }
   document.body.classList.remove('battle');
   $('#centerPrep').hidden = false;
   $('#centerBattle').hidden = true;
@@ -844,7 +869,9 @@ function sample(arr, n) {
 // ---------------------------------------------------------------------------
 async function startBattle(encoded) {
   const { w, h, maxGen, unlimited, variant } = S.settings;
-  const body = encoded || encodeBoard(prepBoard());
+  const botArmy = S.mode === 'bot' ? S.bot.army : null;
+  if (S.mode === 'bot' && !botArmy) return toast('The bot has no army to play.');
+  const body = encoded || encodeBoard(prepBoard(botArmy ? botPlacements(botArmy[S.bot.side], S.bot.side) : []));
   try {
     const frame = await api(`/api/battle?w=${w}&h=${h}&maxgen=${unlimited ? 0 : maxGen}&variant=${variant}`, { method: 'POST', body });
     S.drag = null;
@@ -856,8 +883,9 @@ async function startBattle(encoded) {
     S.battle = {
       id: frame.id, frame, encoded: body, playing: true, turbo: false, acc: 0,
       pending: null, skipping: false, resultShown: false,
-      live: { red: [], blue: [] }, rate: [],
+      live: { red: [], blue: [] }, rate: [], botArmy,
     };
+    updateBotInfo();
     applyFrame(frame);
     updateBattleControls();
     updateSides();
@@ -1074,7 +1102,8 @@ function initSpeedDial() {
 function showResult(frame) {
   const banner = $('#resultBanner');
   banner.className = `result-banner ${frame.winner}`;
-  banner.textContent = frame.winner === 'draw' ? 'Draw' : `${cap(frame.winner)} wins!`;
+  banner.textContent = frame.winner === 'draw' ? 'Draw'
+    : S.mode === 'bot' ? (isBot(frame.winner) ? 'The bot wins' : 'You win!') : `${cap(frame.winner)} wins!`;
   const loser = frame.winner === 'red' ? 'Blue' : 'Red';
   let reason = '';
   if (frame.reason === 'elimination') {
@@ -1090,6 +1119,9 @@ function showResult(frame) {
       : `The board started repeating every ${frame.period} generations (at ${fmt(frame.gen)}). Average over the cycle: Red ${avg(frame.redScore)} vs Blue ${avg(frame.blueScore)}.`;
   }
   $('#resultReason').textContent = reason;
+  const army = S.battle && S.battle.botArmy;
+  $('#resultBot').hidden = !army;
+  if (army) $('#resultBot').textContent = `The bot played ${botArmyText(army)}.`;
   $('#resultDialog').showModal();
   drawResultChart(frame.history);
 }
@@ -1156,17 +1188,26 @@ function drawResultChart(history) {
 // ---------------------------------------------------------------------------
 function openSettings() {
   const s = S.settings;
+  const locked = S.mode === 'bot';
+  const sizes = S.config.sizes.slice();
+  if (!sizes.some(z => z.id === s.sizeId)) sizes.push({ id: s.sizeId, name: `${s.w} x ${s.h}` });
+  $('#setSize').innerHTML = sizes.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
+  for (const el of $$('#settingsForm input, #settingsForm select')) el.disabled = locked;
+  $('#settingsLock').hidden = !locked;
+  $('#settingsForm button[value=apply]').hidden = locked;
+  $('#settingsForm button[value=cancel]').textContent = locked ? 'Close' : 'Cancel';
   $('#setSize').value = s.sizeId;
   $('#setBudget').value = s.budget;
   $('#setMaxGen').value = s.maxGen;
   $('#setUnlimited').checked = s.unlimited;
-  $('#setMaxGen').disabled = s.unlimited;
+  $('#setMaxGen').disabled = s.unlimited || locked;
   $('#setBlind').checked = s.blind;
   for (const r of $$('input[name=variant]')) r.checked = r.value === s.variant;
   $('#settingsDialog').showModal();
 }
 
 function applySettings() {
+  if (S.mode === 'bot') return;  // the league's settings are locked
   const s = S.settings;
   const size = S.config.sizes.find(z => z.id === $('#setSize').value) || S.config.sizes[1];
   const sizeChanged = size.id !== s.sizeId;
@@ -1196,6 +1237,201 @@ function applySettings() {
     loadBattlefield();
   }
   boardChanged();
+}
+
+// ---------------------------------------------------------------------------
+// vs Bot: one player against a league trained by life_arena. The league was
+// trained for one battlefield and one set of rules, so those are taken over
+// unchanged. The bot draws its army before the human places anything and keeps
+// it hidden until the battle starts, exactly like a blind human opponent.
+// ---------------------------------------------------------------------------
+function isBot(owner) { return S.mode === 'bot' && owner === S.bot.side; }
+function humanSide() { return S.bot.side === 'red' ? 'blue' : 'red'; }
+
+// Why the server cannot reproduce the league's battle settings, or null.
+function leagueProblem(league) {
+  const s = league && league.settings;
+  if (!s || !Array.isArray(league.armies)) return 'it is not a life_arena league';
+  if (!S.config.presets.some(p => p.id === s.preset)) return `unknown battlefield "${s.preset}"`;
+  // The ranges /api/battlefield and /api/battle accept (larger values would be clamped).
+  if (!(s.width >= 50 && s.width <= 1000 && s.height >= 20 && s.height <= 600)) return `unsupported size ${s.width} x ${s.height}`;
+  if (!(Number.isInteger(s.fieldSeed) && s.fieldSeed >= 0 && s.fieldSeed <= 2 ** 52)) return `unsupported battlefield seed ${s.fieldSeed}`;
+  if (!(s.count >= 0 && s.count <= 200000 && s.budget >= 1 && s.maxGenerations >= 0 && s.maxGenerations <= 10000000)) return 'settings out of range';
+  return null;
+}
+
+// Why a placement list would be illegal for a human on this page, or null.
+// Same rules as placementFor(): every piece fully inside the own zone, and the
+// total cost within the budget.
+function armyProblem(list, owner, settings) {
+  const { width, height, budget } = settings;
+  const [zx0, zx1] = zoneRange(owner, width);
+  let cost = 0;
+  for (const p of list) {
+    const pattern = S.arsenal.get(p.pattern);
+    if (!pattern) return `unknown pattern ${p.pattern}`;
+    if (![p.x, p.y, p.rot].every(Number.isInteger)) return `bad placement of ${p.pattern}`;
+    const shape = oriented(pattern, { rot: p.rot & 3, mirror: !!p.mirror });
+    if (p.x < zx0 || p.x + shape.w > zx1 || p.y < 0 || p.y + shape.h > height) return `${p.pattern} at ${p.x},${p.y} is outside the ${owner} zone`;
+    cost += pattern.cost;
+  }
+  return cost > budget ? `it costs ${cost} of ${budget} points` : null;
+}
+
+// A league placement list as page placements: (x, y) is the top-left corner of
+// the piece after `rot` clockwise quarter turns and then the optional mirror,
+// the same convention as gol::transformed() and Arena::board().
+function botPlacements(list, owner) {
+  return list.map(p => {
+    const pattern = S.arsenal.get(p.pattern);
+    const shape = oriented(pattern, { rot: p.rot & 3, mirror: !!p.mirror });
+    return { id: 0, owner, patternId: pattern.id, cost: pattern.cost, x: p.x, y: p.y, w: shape.w, h: shape.h, cells: shape.cells };
+  });
+}
+
+// The bot's army for the next battle. Hard follows the league's Nash mixture,
+// Easy picks any of its armies with equal chance. Nothing the human does
+// influences the draw.
+function pickBotArmy() {
+  const armies = S.bot.league ? S.bot.league.playable : [];
+  const weight = a => (S.bot.level === 'hard' ? Math.max(0, +a.weight || 0) : 1);
+  const candidates = armies.filter(a => weight(a) > 0);
+  if (!candidates.length) return armies.length ? armies[Math.floor(Math.random() * armies.length)] : null;
+  let r = Math.random() * candidates.reduce((sum, a) => sum + weight(a), 0);
+  for (const a of candidates) {
+    r -= weight(a);
+    if (r < 0) return a;
+  }
+  return candidates[candidates.length - 1];
+}
+
+function botArmyText(army) {
+  const n = S.bot.league ? S.bot.league.armies.length : 0;
+  return `army #${army.id} of ${n} (${army.origin}, ${army.cost} pts, Nash weight ${Math.round(army.weight * 1000) / 10}%)`;
+}
+
+// Switches to vs Bot mode with league `id` (the first one if unknown). Returns false if that is not possible.
+async function useBot(id) {
+  const entry = S.bots.find(b => b.id === id) || S.bots[0];
+  if (!entry) return false;
+  let league;
+  try {
+    league = await api(`/api/bot?id=${encodeURIComponent(entry.id)}`);
+  } catch (err) {
+    toast(`Could not load the bot: ${err.message}`);
+    return false;
+  }
+  const problem = leagueProblem(league);
+  if (problem) {
+    toast(`The bot ${entry.id} cannot be played here: ${problem}.`);
+    return false;
+  }
+  // Only armies that are legal on this page, for both sides, are ever played.
+  league.playable = league.armies.filter(a => {
+    const why = armyProblem(a.red, 'red', league.settings) || armyProblem(a.blue, 'blue', league.settings);
+    if (why) console.warn(`bot ${entry.id}: army #${a.id} is never played: ${why}`);
+    return !why;
+  });
+  if (!league.playable.length) {
+    toast(`The bot ${entry.id} has no legal army.`);
+    return false;
+  }
+
+  if (S.mode !== 'bot') S.duo = { settings: { ...S.settings }, field: { ...S.field } };
+  const ls = league.settings;
+  const size = S.config.sizes.find(z => z.width === ls.width && z.height === ls.height);
+  Object.assign(S.settings, {
+    sizeId: size ? size.id : 'league', w: ls.width, h: ls.height, budget: ls.budget,
+    maxGen: ls.maxGenerations || S.settings.maxGen, unlimited: ls.maxGenerations === 0,
+    variant: ls.variant === 'contagion' ? 'contagion' : 'birth', blind: false,
+  });
+  S.field = { preset: ls.preset, count: ls.count, seed: ls.fieldSeed };
+  S.mode = 'bot';
+  S.bot.id = entry.id;
+  S.bot.league = league;
+  await rebuildBoard();
+  return true;
+}
+
+async function setMode(mode) {
+  if (mode === S.mode) return;
+  if (mode === 'bot') {
+    await useBot(S.bot.id);
+    return;
+  }
+  if (S.duo) {
+    Object.assign(S.settings, S.duo.settings);
+    S.field = { ...S.duo.field };
+  }
+  S.duo = null;
+  S.mode = 'duo';
+  S.bot.army = null;
+  await rebuildBoard();
+}
+
+// After a change of mode or league: new size, new battlefield, empty armies.
+function rebuildBoard() {
+  S.battle = null;
+  S.grey = null;
+  off.width = 0;
+  for (const d of $$('dialog[open]')) d.close();
+  updateModeUi();
+  syncFieldControls();
+  resize();
+  resetPreparation({ clearArmies: true });
+  savePrefs();
+  return loadBattlefield();
+}
+
+function setBotSide(human) {
+  const side = human === 'red' ? 'blue' : 'red';
+  if (side === S.bot.side || S.phase !== 'prep') return;
+  S.bot.side = side;
+  updateModeUi();
+  resetPreparation({ clearArmies: true });
+  savePrefs();
+}
+
+function setBotLevel(level) {
+  if (level === S.bot.level) return;
+  S.bot.level = level;
+  S.bot.army = pickBotArmy();
+  updateModeUi();
+  savePrefs();
+}
+
+function updateModeUi() {
+  const bot = S.mode === 'bot';
+  $('#modeSwitch').hidden = !S.bots.length;
+  for (const b of $$('#modeSwitch button')) b.classList.toggle('on', b.dataset.mode === S.mode);
+  for (const sel of ['#presetSelect', '#btnReroll', '#countRow', '#presetDesc']) $(sel).hidden = bot;
+  $('#botPrep').hidden = !bot;
+  for (const owner of ['red', 'blue']) {
+    $(`.score.${owner} .label`).textContent = bot ? `${cap(owner)} · ${isBot(owner) ? 'bot' : 'you'}` : cap(owner);
+  }
+  if (!bot) return;
+  const s = S.settings;
+  const preset = S.config.presets.find(p => p.id === S.field.preset);
+  $('#botField').textContent = `🔒 ${preset.name}${preset.usesCount ? ` · ${fmt(S.field.count)} grey` : ''} · seed ${S.field.seed}`;
+  $('#botField').title = `${s.w} x ${s.h} board, ${s.budget} points per player, ` +
+    `${s.unlimited ? 'no generation limit' : `limit ${fmt(s.maxGen)} generations`}, ` +
+    `${s.variant === 'contagion' ? 'Contagion' : 'Birthright'} rule. Switch to 2 players to change them.`;
+  const select = $('#botSelect');
+  select.hidden = S.bots.length < 2;
+  select.innerHTML = S.bots.map(b => `<option value="${b.id}">${b.id}</option>`).join('');
+  select.value = S.bot.id;
+  for (const b of $$('#botPrep [data-side]')) b.classList.toggle('on', b.dataset.side === humanSide());
+  for (const b of $$('#botPrep [data-level]')) b.classList.toggle('on', b.dataset.level === S.bot.level);
+}
+
+// During the battle the bot's army is no secret any more.
+function updateBotInfo() {
+  const army = S.battle && S.battle.botArmy;
+  $('#botInfo').hidden = !army;
+  if (army) {
+    $('#botInfo').textContent = `Bot: army #${army.id} · ${army.origin}`;
+    $('#botInfo').title = `The bot played ${botArmyText(army)}.`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,7 +1476,7 @@ function armIdle() {
 
 function newGame() {
   if (S.battle) S.battle = null;
-  if (['random', 'random_mirror', 'random_rotational', 'reactor'].includes(S.field.preset)) {
+  if (S.mode !== 'bot' && ['random', 'random_mirror', 'random_rotational', 'reactor'].includes(S.field.preset)) {
     S.field.seed = newSeed();
     loadBattlefield();
   }
@@ -1290,7 +1526,6 @@ function wire() {
   $('#btnResultEdit').addEventListener('click', () => { $('#resultDialog').close(); S.battle = null; resetPreparation({ clearArmies: false }); });
   $('#btnResultNew').addEventListener('click', () => { $('#resultDialog').close(); newGame(); });
 
-  $('#setSize').innerHTML = S.config.sizes.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
   $('#btnSettings').addEventListener('click', openSettings);
   $('#settingsDialog').addEventListener('close', () => {
     if ($('#settingsDialog').returnValue === 'apply') applySettings();
@@ -1298,6 +1533,11 @@ function wire() {
   $('#btnRules').addEventListener('click', () => $('#rulesDialog').showModal());
   $('#btnRulesClose').addEventListener('click', () => $('#rulesDialog').close());
   $('#btnNew').addEventListener('click', newGame);
+
+  for (const btn of $$('#modeSwitch button')) btn.addEventListener('click', () => setMode(btn.dataset.mode));
+  for (const btn of $$('#botPrep [data-side]')) btn.addEventListener('click', () => setBotSide(btn.dataset.side));
+  for (const btn of $$('#botPrep [data-level]')) btn.addEventListener('click', () => setBotLevel(btn.dataset.level));
+  $('#botSelect').addEventListener('change', e => useBot(e.target.value));
 
   new ResizeObserver(() => {
     resize();
@@ -1353,13 +1593,20 @@ async function init() {
   const size = S.config.sizes.find(z => z.id === S.settings.sizeId) || S.config.sizes[1];
   Object.assign(S.settings, { sizeId: size.id, w: size.width, h: size.height });
 
+  try {
+    S.bots = (await api('/api/bots')).bots;
+  } catch { S.bots = []; }
+
   buildCards();
   wire();
   initSpeedDial();
+  const startInBotMode = S.mode === 'bot' && S.bots.length > 0;
+  S.mode = 'duo';
+  updateModeUi();
   syncFieldControls();
   resize();
   resetPreparation({ clearArmies: true });
-  await loadBattlefield();
+  if (!startInBotMode || !(await useBot(S.bot.id))) await loadBattlefield();
   requestAnimationFrame(tick);
 
   let seenRules = false;

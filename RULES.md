@@ -145,6 +145,7 @@ The battle ends as soon as one of these happens:
 | Jump to the result | **⏭** |
 | Fold / unfold the arsenal | `A`, the » / « button, or the tab at the board edge |
 | Focus mode (once both armies are ready) | **⛶ Focus** or `F`: the board fills the screen, controls fade out while the mouse rests. `Esc` leaves it |
+| Play against the bot | **vs Bot** at the top left: pick your side, the battlefield is the one the bot was trained for |
 | Rules | `H` |
 
 ---

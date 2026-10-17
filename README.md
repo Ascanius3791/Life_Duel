@@ -31,6 +31,34 @@ ctest --test-dir build        # core tests
 ./build/life_battle --port 9000 --host 0.0.0.0 --no-browser   # e.g. play from another device in the LAN
 ```
 
+### Playing against the bot
+
+Click **vs Bot** at the top left of Life Duel. The bot is a league trained by
+`life_arena` (see below); the one in `assets/leagues/` was trained on the Medium
+board with *Random (mirrored)*, 900 grey cells, seed 1, 120 points, a 2000
+generation limit and the Birthright rule.
+
+- Pick your side (**You play Red / Blue**). The bot plays the other one.
+- The battlefield and all settings are locked to the ones the bot was trained
+  for, because its armies are only good there.
+- The bot draws its army when the preparation starts, before you place
+  anything, and it stays hidden until the battle begins. **Hard** draws from the
+  league's Nash mixture, **Easy** picks any army of the league with equal chance
+  (including weak early ones). After the battle the result names the army it
+  played.
+
+`life_battle` offers every `*.json` league export in `assets/leagues/` (found
+next to the sources or as `leagues/` next to the executable). To play against a
+league of your own, pass it instead, as often as you like:
+
+```bash
+./build/life_battle --league league.txt            # league.txt.json is served
+./build/life_battle --league a.txt --league b.txt  # a choice of bots
+```
+
+The league file is re-read for every game, so you can play against a league
+while it is still being trained.
+
 ### Classic controls
 
 | | |
@@ -92,7 +120,7 @@ battle/     life_battle: HTTP server + JSON API
   web/        index.html, style.css, app.js (no build step, no external libraries)
 arena/      life_arena: armies, mutation, matches, Nash solver, league training
 tests/      core_tests
-assets/     DejaVu fonts for the native GUI
+assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mode
 ```
 
 ### Battle server API
@@ -103,6 +131,8 @@ assets/     DejaVu fonts for the native GUI
 | `GET /api/battlefield?w&h&preset&count&seed` | generated grey battlefield |
 | `POST /api/battle?w&h&maxgen&variant` (body = board) | start a battle, returns the first frame (`maxgen=0`: no limit) |
 | `GET /api/step?id&n=K` or `&ms=T` | advance K generations, or as many as fit into T ms; `board=0` omits the board |
+| `GET /api/bots` | the bot leagues on offer: `{"bots":[{"id"}]}` |
+| `GET /api/bot?id` | that league's JSON export, verbatim (settings, armies with Nash weights and red/blue placements) |
 
 Boards are sent as run-length text: `.` dead, `r` red, `b` blue, `g` grey, each
 optionally prefixed with a repeat count (`12.3r.g`).

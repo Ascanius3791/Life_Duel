@@ -13,6 +13,10 @@
       <span class="brand-mark"><i class="r"></i><i class="g"></i><i class="b"></i><i class="b"></i></span>
       <span>Life <strong>Duel</strong></span>
     </div>
+    <div class="segmented mode-switch" id="modeSwitch" role="group" aria-label="Game mode" hidden>
+      <button data-mode="duo" title="Two players at one screen">2 players</button>
+      <button data-mode="bot" title="Play against a bot trained by self-play (life_arena)">vs Bot</button>
+    </div>
     <div class="phase" id="phaseLabel">Loading…</div>
     <div class="top-actions">
       <button class="ghost" id="btnRules" title="Rules (H)">Rules</button>
@@ -107,12 +111,29 @@
         <input type="number" id="countInput" min="0" max="20000" step="50">
       </div>
       <p class="muted preset-desc" id="presetDesc"></p>
+      <!-- vs Bot: the battlefield is the one the bot was trained on -->
+      <div class="bot-prep" id="botPrep" hidden>
+        <span class="lock-chip" id="botField"></span>
+        <p class="muted preset-desc">The bot was trained for this battlefield, so it is locked.</p>
+        <select id="botSelect" aria-label="Bot" hidden></select>
+        <div class="segmented" role="group" aria-label="Your side">
+          <span class="seg-label">You play</span>
+          <button class="red" data-side="red">Red</button>
+          <button class="blue" data-side="blue">Blue</button>
+        </div>
+        <div class="segmented" role="group" aria-label="Bot strength">
+          <span class="seg-label">Bot</span>
+          <button data-level="hard" title="Chooses its army from the Nash mixture of its league: the strongest way to pick at random">Hard</button>
+          <button data-level="easy" title="Chooses any army of its league with equal chance, including weak early ones">Easy</button>
+        </div>
+      </div>
       <button class="start" id="btnStart" disabled>Start battle</button>
     </div>
 
     <!-- Battle: playback -->
     <div class="bar-section" id="centerBattle" hidden>
       <button class="ghost small" id="btnBackToPrep" title="Edit the armies again">← Preparation</button>
+      <span class="muted bot-info" id="botInfo" hidden></span>
       <div class="transport">
         <button class="icon big" id="btnRestart" title="Replay from generation 0">⏮</button>
         <button class="icon big primary" id="btnPlay" title="Play / pause (Space)">⏸</button>
@@ -144,6 +165,7 @@
   <dialog id="resultDialog" class="modal">
     <div class="result-banner" id="resultBanner">Red wins</div>
     <p id="resultReason"></p>
+    <p class="muted bot-reveal" id="resultBot" hidden></p>
     <canvas id="resultChart" width="640" height="220"></canvas>
     <div class="legend"><span class="r">Red</span><span class="b">Blue</span><span class="g">Grey</span></div>
     <div class="modal-actions">
@@ -167,6 +189,7 @@
   <!-- Settings -->
   <dialog id="settingsDialog" class="modal">
     <h2>Game settings</h2>
+    <p class="lock-note" id="settingsLock" hidden>🔒 vs Bot: these settings are fixed to the ones the bot was trained with.</p>
     <form method="dialog" id="settingsForm">
       <label class="field">Board size
         <select name="size" id="setSize"></select>
@@ -238,6 +261,7 @@
           <li><b>R</b> / <b>Shift+R</b> rotate, <b>F</b> mirror left/right, <b>V</b> mirror up/down. The mouse wheel rotates while placing.</li>
           <li><b>Right-click</b> a placed pattern to remove it and get the points back.</li>
           <li><b>A</b> folds the arsenal away or brings it back.</li>
+          <li><b>vs Bot</b> (top left): play one side against a trained bot. It picks its army in secret before you place yours.</li>
           <li>During the battle: <b>Space</b> play/pause, <b>→</b> single step, <b>+</b>/<b>−</b> speed, <b>M</b> max speed, <b>F</b> focus mode (maximised board, <b>Esc</b> leaves it).</li>
         </ul>
       </section>
