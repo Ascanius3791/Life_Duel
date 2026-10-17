@@ -7,7 +7,7 @@
 
 importScripts('engine/life_duel_engine.js');
 
-const ready = createLifeDuelEngine().then(m => {
+const ready = createLifeDuelEngine({ locateFile: file => `engine/${file}` }).then(m => {
   // Strings go through the heap: boards can be far larger than the wasm stack.
   const call = (fn, args) => {
     const ptrs = [];

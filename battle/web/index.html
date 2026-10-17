@@ -16,6 +16,7 @@
     <div class="segmented mode-switch" id="modeSwitch" role="group" aria-label="Game mode" hidden>
       <button data-mode="duo" title="Two players at one screen">2 players</button>
       <button data-mode="bot" title="Play against a bot trained by self-play (life_arena)">vs Bot</button>
+      <button data-mode="online" title="Play against a friend on another computer: share a link">Online</button>
     </div>
     <div class="phase" id="phaseLabel">Loading…</div>
     <div class="top-actions">
@@ -127,6 +128,14 @@
           <button data-level="easy" title="Chooses any army of its league with equal chance, including weak early ones">Easy</button>
         </div>
       </div>
+      <!-- Online: connection to the friend, the invitation link -->
+      <div class="online-prep" id="onlinePrep" hidden>
+        <span class="online-status" id="onlineStatus"></span>
+        <input type="text" id="onlineLink" readonly aria-label="Invitation link" hidden>
+        <button class="ghost small" id="btnOnlineCopy" hidden>Copy link</button>
+        <button class="ghost small" id="btnOnlineNew" hidden>New link</button>
+        <button class="ghost small" id="btnOnlineLeave" title="Close the connection and play at this screen">Leave</button>
+      </div>
       <button class="start" id="btnStart" disabled>Start battle</button>
     </div>
 
@@ -134,6 +143,7 @@
     <div class="bar-section" id="centerBattle" hidden>
       <button class="ghost small" id="btnBackToPrep" title="Edit the armies again">← Preparation</button>
       <span class="muted bot-info" id="botInfo" hidden></span>
+      <span class="muted bot-info" id="onlineInfo" hidden></span>
       <div class="transport">
         <button class="icon big" id="btnRestart" title="Replay from generation 0">⏮</button>
         <button class="icon big primary" id="btnPlay" title="Play / pause (Space)">⏸</button>
@@ -167,6 +177,7 @@
     <p id="resultReason"></p>
     <p class="muted bot-reveal" id="resultMark" hidden></p>
     <p class="muted bot-reveal" id="resultBot" hidden></p>
+    <p class="muted bot-reveal" id="resultOnline" hidden></p>
     <canvas id="resultChart" width="640" height="220"></canvas>
     <div class="legend"><span class="r">Red</span><span class="b">Blue</span><span class="g">Grey</span></div>
     <div class="modal-actions">
@@ -174,6 +185,7 @@
       <button class="ghost" id="btnResultReplay">Replay</button>
       <button class="ghost" id="btnResultEdit">Edit armies</button>
       <button class="primary" id="btnResultNew">New game</button>
+      <button class="primary" id="btnResultRematch" hidden>Rematch</button>
     </div>
   </dialog>
 
@@ -272,6 +284,7 @@
     </div>
   </dialog>
 
+  <script src="online.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

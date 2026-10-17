@@ -8,6 +8,10 @@ Two programs that share one C++ simulation core:
 | `life_battle` | **Life Duel**, a red-vs-blue 1v1 played in the browser. A small built-in HTTP server runs the simulation in C++, and the browser handles placement and rendering. |
 | `life_arena` | Trains Life Duel bots by self-play on one fixed battlefield (command line, no GUI). |
 
+Life Duel also runs without any server, as a static web site: the same C++
+engine compiled to WebAssembly. That is how it is published on GitHub Pages and
+played **online against a friend** on another computer (see [Play online](#play-online)).
+
 The rules of the duel are in **[RULES.md](RULES.md)**.
 
 ## Building
@@ -67,6 +71,61 @@ league of your own, pass it instead, as often as you like:
 
 The league file is re-read for every game, so you can play against a league
 while it is still being trained.
+
+### Play online
+
+Click **Online** at the top left. You get an invitation link; send it to your
+friend (chat, mail, ...). When they open it, the two browsers connect directly
+(WebRTC through [PeerJS](https://peerjs.com/); PeerJS's free public server only
+helps them find each other, no game data goes through it).
+
+- The host's settings and battlefield are used; the host can still change them
+  until they lock in their army (the round then starts over for both). The
+  host plays Red first, sides swap with every rematch.
+- Both place their armies at the same time and cannot see each other's. **Ready**
+  locks the army in: the page sends only a fingerprint (SHA-256 of the army
+  and a random salt). When both are locked in, both armies are revealed; each
+  page checks the other's against its fingerprint and the placement rules.
+- Each page then simulates the battle itself. They are deterministic and
+  compare checksums of the starting board and of the result (including its
+  whole history), so a desync would be reported.
+- After the battle, **Rematch** asks the friend for another round. If the
+  connection drops, the page says so; **New link** starts a new game.
+
+The link only works once and while the host keeps the page open. Online play
+works from the GitHub Pages site and from `life_battle` alike (it then needs
+internet access for PeerJS; a link to `127.0.0.1` of course only reaches the
+same machine, so share the Pages link or run `life_battle --host 0.0.0.0`).
+Very restrictive networks (symmetric NAT, some corporate/mobile networks) may
+block direct WebRTC connections; that would need a TURN server
+(`window.LIFE_DUEL_PEER_OPTIONS = { config: { iceServers: [...] } }` before
+`online.js` loads).
+
+### The static web site (GitHub Pages)
+
+`tools/build_site.sh` compiles the battle engine to WebAssembly with
+[Emscripten](https://emscripten.org/), runs the core tests under node (the
+browser must compute exactly what the native build computes) and writes the
+site to `dist/`:
+
+```bash
+# once: Emscripten SDK, e.g. in ~/emsdk (the script finds it there or on PATH)
+git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+~/emsdk/emsdk install latest && ~/emsdk/emsdk activate latest
+
+tools/build_site.sh                       # -> dist/
+python3 -m http.server -d dist 8000       # open http://localhost:8000/
+```
+
+In the static site, `static-backend.js` answers the same `/api/...` calls
+`app.js` makes to `life_battle` (see the API below), by running the C++ engine
+(`battle/wasm_engine.cpp`) in a Web Worker; the bot leagues are plain files
+listed in `leagues/index.json`.
+
+**Publishing:** `.github/workflows/pages.yml` builds and tests everything on
+every push to `main` and deploys `dist/` to GitHub Pages. In the repository's
+*Settings → Pages*, set *Source* to **GitHub Actions** once. The game is then at
+`https://<user>.github.io/<repository>/`.
 
 ### Classic controls
 
@@ -139,10 +198,15 @@ core/       gol_core library
   battle.*    coloured battle rules, end detection, battlefield presets, board encoding
   fast_battle.*  the same rules bit-parallel, for bulk simulation
 classic/    life_classic (SFML) + a tiny immediate-mode widget layer
-battle/     life_battle: HTTP server + JSON API
-  web/        index.html, style.css, app.js (no build step, no external libraries)
+battle/     life_battle: HTTP server + JSON API (api_json.* is shared with the WebAssembly engine)
+  wasm_engine.cpp  the engine for the static site (Emscripten target life_duel_engine)
+  web/        index.html, style.css, app.js (no build step; PeerJS is loaded from a CDN for online play)
+    online.js         online play: PeerJS connection, commit-reveal, checksums, rematch
+    static-backend.js, engine-worker.js   the /api/ calls answered in the browser (static site only)
+tools/      build_site.sh: WebAssembly build + static site in dist/
+.github/workflows/pages.yml   CI: native build + tests, static site, GitHub Pages deploy
 arena/      life_arena: armies, mutation, matches, Nash solver, league training
-tests/      core_tests
+tests/      core_tests, arena_tests; web/ browser tests (Playwright scripts, usage in their headers)
 assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mode
 ```
 
