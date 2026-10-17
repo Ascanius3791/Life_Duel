@@ -29,6 +29,7 @@ body {
   font: 14px/1.4 var(--font);
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
   user-select: none;
@@ -87,7 +88,7 @@ input[type=range] { accent-color: #8a7dff; flex: 1; min-width: 60px; }
 .brand-mark .r { background: var(--red); }
 .brand-mark .b { background: var(--blue); }
 .brand-mark .g { background: var(--grey); }
-.phase { flex: 1; text-align: center; color: var(--muted); font-weight: 500; }
+.phase { flex: 1; min-width: 0; text-align: center; color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phase b.red { color: var(--red); }
 .phase b.blue { color: var(--blue); }
 .top-actions { display: flex; gap: 6px; }
@@ -259,6 +260,7 @@ body.battle .drawer, body.battle .drawer-tab { display: none; }
 .muted { color: var(--muted); margin: 0; font-size: 12px; }
 .preset-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bot-prep { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+#botSelect { width: auto; max-width: 220px; min-width: 0; }
 .lock-chip {
   white-space: nowrap; padding: 5px 10px; border-radius: 8px; font-size: 13px;
   background: var(--bg-2); border: 1px dashed var(--border-2); color: #c9cfdd;
