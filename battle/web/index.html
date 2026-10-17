@@ -41,7 +41,7 @@
         <span class="dot">·</span>
         <span id="rateLabel">—</span>
       </div>
-      <div class="progress" id="genProgressBar"><div id="genProgress"></div></div>
+      <div class="progress" id="genProgressBar"><div id="genProgress"></div><span class="gen-mark" id="genMark" title="The generation limit the bot was trained with" hidden></span></div>
     </div>
     <div class="score blue">
       <span class="sub" id="scoreBlueSub"></span>
@@ -165,6 +165,7 @@
   <dialog id="resultDialog" class="modal">
     <div class="result-banner" id="resultBanner">Red wins</div>
     <p id="resultReason"></p>
+    <p class="muted bot-reveal" id="resultMark" hidden></p>
     <p class="muted bot-reveal" id="resultBot" hidden></p>
     <canvas id="resultChart" width="640" height="220"></canvas>
     <div class="legend"><span class="r">Red</span><span class="b">Blue</span><span class="g">Grey</span></div>

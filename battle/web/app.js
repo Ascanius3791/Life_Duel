@@ -35,7 +35,7 @@ const S = {
   dirty: true,
   mode: 'duo',          // 'duo': two players at one screen | 'bot': one player against a trained bot
   bots: [],             // leagues the server offers: [{ id }]
-  bot: { id: null, league: null, side: 'blue', level: 'hard', army: null },
+  bot: { id: null, league: null, side: 'blue', level: 'hard', army: null, limit: null },
   duo: null,            // the two-player settings, kept aside while vs Bot mode replaces them
 };
 
@@ -52,6 +52,7 @@ function loadPrefs() {
     if (p.speed) S.speed = p.speed;
     if (p.mode) S.mode = p.mode;
     if (p.bot) Object.assign(S.bot, { id: p.bot.id, side: p.bot.side === 'red' ? 'red' : 'blue', level: p.bot.level === 'easy' ? 'easy' : 'hard' });
+    if (p.bot && p.bot.limit) S.bot.limit = { maxGen: +p.bot.limit.maxGen || 2000, unlimited: !!p.bot.limit.unlimited };
   } catch { /* storage unavailable */ }
 }
 function savePrefs() {
@@ -60,7 +61,7 @@ function savePrefs() {
   try {
     localStorage.setItem('lifeDuel.prefs', JSON.stringify({
       settings, field: { preset: field.preset, count: field.count }, speed: S.speed,
-      mode: S.mode, bot: { id: S.bot.id, side: S.bot.side, level: S.bot.level },
+      mode: S.mode, bot: { id: S.bot.id, side: S.bot.side, level: S.bot.level, limit: S.bot.limit },
     }));
   } catch { /* storage unavailable */ }
 }
@@ -798,8 +799,12 @@ function updateScoreboard() {
     const f = S.battle.frame;
     ({ red, blue, grey } = f);
     redSub = blueSub = '';
-    $('#genLabel').textContent = `Generation ${fmt(f.gen)} / ${f.maxGen ? fmt(f.maxGen) : '∞'}`;
+    const m = S.battle.mark;
+    $('#genLabel').textContent = `Generation ${fmt(f.gen)} / ${f.maxGen ? fmt(f.maxGen) : '∞'}` +
+      (m ? ` (bot trained to ${fmt(m.gen)})` : '');
     $('#genProgress').style.width = f.maxGen ? `${Math.min(100, (f.gen / f.maxGen) * 100)}%` : '0%';
+    $('#genMark').hidden = !m || !f.maxGen;
+    if (m && f.maxGen) $('#genMark').style.left = `${(m.gen / f.maxGen) * 100}%`;
     $('#genProgressBar').classList.toggle('endless', !f.maxGen && !f.finished);
   } else {
     const board = prepBoard();
@@ -810,6 +815,7 @@ function updateScoreboard() {
     $('#genLabel').textContent = 'Preparation';
     $('#genProgress').style.width = '0%';
     $('#genProgressBar').classList.remove('endless');
+    $('#genMark').hidden = true;
     $('#rateLabel').textContent = S.settings.unlimited ? 'no generation limit' : `limit ${fmt(S.settings.maxGen)} gens`;
   }
   const showRed = !isHidden('red'), showBlue = !isHidden('blue');
@@ -883,7 +889,7 @@ async function startBattle(encoded) {
     S.battle = {
       id: frame.id, frame, encoded: body, playing: true, turbo: false, acc: 0,
       pending: null, skipping: false, resultShown: false,
-      live: { red: [], blue: [] }, rate: [], botArmy,
+      live: { red: [], blue: [] }, rate: [], botArmy, mark: trainedMark(),
     };
     updateBotInfo();
     applyFrame(frame);
@@ -897,6 +903,10 @@ async function startBattle(encoded) {
 function applyFrame(frame) {
   const b = S.battle;
   b.frame = frame;
+  if (b.mark && !b.mark.reached && frame.gen === b.mark.gen) {
+    Object.assign(b.mark, { reached: true, red: frame.red, blue: frame.blue });
+    if (!frame.finished && !b.skipping) toast(`Generation ${fmt(b.mark.gen)}: the bot was trained up to here — ${markStanding(b.mark)}. Playing on.`);
+  }
   if (frame.board) paintBoard(decodeBoard(frame.board, S.settings.w * S.settings.h));
   const last = b.live.red[b.live.red.length - 1];
   if (frame.history) {
@@ -938,10 +948,21 @@ function measuredRate() {
   return t1 > t0 ? ((g1 - g0) * 1000) / (t1 - t0) : 0;
 }
 
+// vs Bot with a longer limit than the bot was trained for: steps stop exactly
+// at the trained limit once, so the standings there are known.
+function capAtMark(b, query, chunk) {
+  const m = b.mark;
+  if (!m || m.reached || b.frame.gen >= m.gen) return query;
+  const left = m.gen - b.frame.gen;
+  const n = /(^|&)n=(\d+)/.exec(query);
+  return n ? query.replace(/(^|&)n=\d+/, `$1n=${Math.min(+n[2], left)}`)
+    : query.replace(/(^|&)ms=\d+/, `$1n=${Math.min(chunk, left)}`);
+}
+
 function requestStep(query) {
   const b = S.battle;
   const id = b.id;
-  b.pending = api(`/api/step?id=${id}&${query}`)
+  b.pending = api(`/api/step?id=${id}&${capAtMark(b, query, 100)}`)
     .then(frame => { if (S.battle && S.battle.id === id) applyFrame(frame); })
     .catch(err => { toast(err.message); if (S.battle) S.battle.playing = false; updateBattleControls(); })
     .finally(() => { if (S.battle && S.battle.id === id) S.battle.pending = null; });
@@ -990,7 +1011,9 @@ async function skipToEnd() {
     if (b.pending) await b.pending;
     let frame = b.frame;
     while (!frame.finished && S.battle === b && !b.stopSkip) {
-      frame = await api(`/api/step?id=${b.id}&ms=150&board=0`);
+      frame = await api(`/api/step?id=${b.id}&${capAtMark(b, 'ms=150', 400)}&board=0`);
+      b.frame = frame;
+      if (b.mark && !b.mark.reached && frame.gen === b.mark.gen) Object.assign(b.mark, { reached: true, red: frame.red, blue: frame.blue });
       $('#skipProgress').style.width = frame.maxGen ? `${(frame.gen / frame.maxGen) * 100}%` : '100%';
       const of = frame.maxGen ? ` of ${fmt(frame.maxGen)}` : ' (no limit)';
       $('#skipText').textContent = `Generation ${fmt(frame.gen)}${of} · Red ${fmt(frame.red)} · Blue ${fmt(frame.blue)}`;
@@ -1119,14 +1142,17 @@ function showResult(frame) {
       : `The board started repeating every ${frame.period} generations (at ${fmt(frame.gen)}). Average over the cycle: Red ${avg(frame.redScore)} vs Blue ${avg(frame.blueScore)}.`;
   }
   $('#resultReason').textContent = reason;
+  const m = S.battle && S.battle.mark;
+  $('#resultMark').hidden = !(m && m.reached && frame.gen > m.gen);
+  if (!$('#resultMark').hidden) $('#resultMark').textContent = `At generation ${fmt(m.gen)}, the limit the bot was trained for: ${markStanding(m)}.`;
   const army = S.battle && S.battle.botArmy;
   $('#resultBot').hidden = !army;
   if (army) $('#resultBot').textContent = `The bot played ${botArmyText(army)}.`;
   $('#resultDialog').showModal();
-  drawResultChart(frame.history);
+  drawResultChart(frame.history, m && m.reached ? m.gen : 0);
 }
 
-function drawResultChart(history) {
+function drawResultChart(history, markGen) {
   const c = $('#resultChart');
   const dpr = window.devicePixelRatio || 1;
   const w = c.clientWidth, h = c.clientHeight;
@@ -1181,6 +1207,17 @@ function drawResultChart(history) {
   g.restore();
   plot(history.red, COLOR.red, 2, []);
   plot(history.blue, COLOR.blue, 2, []);
+  if (markGen && markGen < lastGen) {
+    const x = pad.l + (markGen / lastGen) * (w - pad.l - pad.r);
+    g.strokeStyle = 'rgba(232,236,245,0.55)';
+    g.lineWidth = 1;
+    g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, h - pad.b); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = '#8d95aa';
+    g.textAlign = 'center';
+    g.fillText('bot trained to here', x, pad.t + 10);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,23 +1229,43 @@ function openSettings() {
   const sizes = S.config.sizes.slice();
   if (!sizes.some(z => z.id === s.sizeId)) sizes.push({ id: s.sizeId, name: `${s.w} x ${s.h}` });
   $('#setSize').innerHTML = sizes.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
+  // vs Bot: the league fixes everything but the generation limit.
   for (const el of $$('#settingsForm input, #settingsForm select')) el.disabled = locked;
+  $('#setUnlimited').disabled = false;
   $('#settingsLock').hidden = !locked;
-  $('#settingsForm button[value=apply]').hidden = locked;
-  $('#settingsForm button[value=cancel]').textContent = locked ? 'Close' : 'Cancel';
+  if (locked) {
+    const t = S.bot.league.settings.maxGenerations;
+    $('#settingsLock').textContent = '🔒 vs Bot: only the generation limit can be changed; the rest is fixed to what the bot was trained with.' +
+      (t ? ` It was trained with a limit of ${fmt(t)} generations — beyond that it plays on, but was never judged there.` : '');
+  }
   $('#setSize').value = s.sizeId;
   $('#setBudget').value = s.budget;
   $('#setMaxGen').value = s.maxGen;
   $('#setUnlimited').checked = s.unlimited;
-  $('#setMaxGen').disabled = s.unlimited || locked;
+  $('#setMaxGen').disabled = s.unlimited;
   $('#setBlind').checked = s.blind;
   for (const r of $$('input[name=variant]')) r.checked = r.value === s.variant;
   $('#settingsDialog').showModal();
 }
 
+function readLimit() {
+  return {
+    maxGen: Math.max(10, Math.min(10000000, Math.round(+$('#setMaxGen').value || 2000))),
+    unlimited: $('#setUnlimited').checked,
+  };
+}
+
 function applySettings() {
-  if (S.mode === 'bot') return;  // the league's settings are locked
   const s = S.settings;
+  if (S.mode === 'bot') {
+    S.bot.limit = readLimit();
+    Object.assign(s, S.bot.limit);
+    savePrefs();
+    if (S.phase === 'battle') resetPreparation({ clearArmies: false });
+    updateModeUi();
+    boardChanged();
+    return;
+  }
   const size = S.config.sizes.find(z => z.id === $('#setSize').value) || S.config.sizes[1];
   const sizeChanged = size.id !== s.sizeId;
   const blindChanged = $('#setBlind').checked !== s.blind;
@@ -1216,8 +1273,7 @@ function applySettings() {
   s.w = size.width;
   s.h = size.height;
   s.budget = Math.max(1, Math.min(10000, Math.round(+$('#setBudget').value || 120)));
-  s.maxGen = Math.max(10, Math.min(10000000, Math.round(+$('#setMaxGen').value || 2000)));
-  s.unlimited = $('#setUnlimited').checked;
+  Object.assign(s, readLimit());
   s.blind = $('#setBlind').checked;
   s.variant = ($$('input[name=variant]').find(r => r.checked) || {}).value || 'birth';
   // Drop the most recent placements of a side that no longer fits the budget.
@@ -1247,6 +1303,19 @@ function applySettings() {
 // ---------------------------------------------------------------------------
 function isBot(owner) { return S.mode === 'bot' && owner === S.bot.side; }
 function humanSide() { return S.bot.side === 'red' ? 'blue' : 'red'; }
+
+// The generation limit the bot was trained with, when the player has chosen to
+// play on beyond it (a longer limit or none); null otherwise.
+function trainedMark() {
+  const t = S.mode === 'bot' && S.bot.league ? S.bot.league.settings.maxGenerations : 0;
+  return t && (S.settings.unlimited || S.settings.maxGen > t) ? { gen: t, reached: false } : null;
+}
+
+function markStanding(m) {
+  const lead = m.red === m.blue ? null : m.red > m.blue ? 'red' : 'blue';
+  const verdict = !lead ? 'it would have been a draw' : isBot(lead) ? 'the bot would have won there' : 'you would have won there';
+  return `Red ${fmt(m.red)} vs Blue ${fmt(m.blue)} cells, ${verdict}`;
+}
 
 // Why the server cannot reproduce the league's battle settings, or null.
 function leagueProblem(league) {
@@ -1342,7 +1411,7 @@ async function useBot(id) {
   const size = S.config.sizes.find(z => z.width === ls.width && z.height === ls.height);
   Object.assign(S.settings, {
     sizeId: size ? size.id : 'league', w: ls.width, h: ls.height, budget: ls.budget,
-    maxGen: ls.maxGenerations || S.settings.maxGen, unlimited: ls.maxGenerations === 0,
+    maxGen: ls.maxGenerations || S.settings.maxGen, unlimited: ls.maxGenerations === 0, ...S.bot.limit,
     variant: ls.variant === 'contagion' ? 'contagion' : 'birth', blind: false,
   });
   S.field = { preset: ls.preset, count: ls.count, seed: ls.fieldSeed };
@@ -1414,8 +1483,9 @@ function updateModeUi() {
   const preset = S.config.presets.find(p => p.id === S.field.preset);
   $('#botField').textContent = `🔒 ${preset.name}${preset.usesCount ? ` · ${fmt(S.field.count)} grey` : ''} · seed ${S.field.seed}`;
   $('#botField').title = `${s.w} x ${s.h} board, ${s.budget} points per player, ` +
-    `${s.unlimited ? 'no generation limit' : `limit ${fmt(s.maxGen)} generations`}, ` +
-    `${s.variant === 'contagion' ? 'Contagion' : 'Birthright'} rule. Switch to 2 players to change them.`;
+    `${s.unlimited ? 'no generation limit' : `limit ${fmt(s.maxGen)} generations`}` +
+    `${S.bot.league.settings.maxGenerations ? ` (trained with ${fmt(S.bot.league.settings.maxGenerations)})` : ''}, ` +
+    `${s.variant === 'contagion' ? 'Contagion' : 'Birthright'} rule. Only the generation limit can be changed (⚙).`;
   const select = $('#botSelect');
   select.hidden = S.bots.length < 2;
   select.innerHTML = S.bots.map(b => `<option value="${b.id}">${b.id}</option>`).join('');
