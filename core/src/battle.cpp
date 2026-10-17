@@ -268,15 +268,47 @@ private:
     std::vector<std::uint8_t> cells_;
 };
 
+// The <random> distributions are implementation-defined: libc++ (Emscripten,
+// macOS) draws other numbers than libstdc++ from the same engine, so the same
+// seed would give another battlefield in the browser build. These two
+// replicate libstdc++'s algorithms exactly, which keeps every battlefield the
+// native builds (and the bots trained on them) have ever generated.
+
+// Uniform in [lo, hi], like std::uniform_int_distribution<int> in libstdc++
+// (Lemire's nearly divisionless method on the full 64-bit engine output).
+__extension__ typedef unsigned __int128 Uint128;  // GCC and Clang, also for wasm32
+
+int uniformInt(std::mt19937_64& rng, int lo, int hi) {
+    const std::uint64_t range = static_cast<std::uint64_t>(static_cast<std::uint32_t>(hi - lo)) + 1;
+    Uint128 product = static_cast<Uint128>(rng()) * range;
+    std::uint64_t low = static_cast<std::uint64_t>(product);
+    if (low < range) {
+        const std::uint64_t threshold = (0 - range) % range;
+        while (low < threshold) {
+            product = static_cast<Uint128>(rng()) * range;
+            low = static_cast<std::uint64_t>(product);
+        }
+    }
+    return lo + static_cast<int>(static_cast<std::uint64_t>(product >> 64));
+}
+
+// True with probability p, like std::bernoulli_distribution in libstdc++
+// (generate_canonical<double, 53> on one 64-bit draw).
+bool chance(std::mt19937_64& rng, double p) {
+    double u = static_cast<double>(rng()) / 18446744073709551616.0;  // 2^64
+    if (u >= 1.0) u = std::nextafter(1.0, 0.0);
+    return u < p;
+}
+
 // Scatter up to `count` distinct cells into the rectangle [x0,x1) x [y0,y1).
 void scatter(Board& b, std::mt19937_64& rng, int count, int x0, int x1, int y0, int y1) {
     if (x1 <= x0 || y1 <= y0) return;
     const long long area = static_cast<long long>(x1 - x0) * (y1 - y0);
     count = static_cast<int>(std::min<long long>(count, area));
-    std::uniform_int_distribution<int> dx(x0, x1 - 1), dy(y0, y1 - 1);
     int placed = 0;
     for (long long attempts = 0; placed < count && attempts < area * 20; ++attempts) {
-        const int x = dx(rng), y = dy(rng);
+        const int x = uniformInt(rng, x0, x1 - 1);
+        const int y = uniformInt(rng, y0, y1 - 1);
         if (!b.get(x, y)) {
             b.set(x, y);
             ++placed;
@@ -309,10 +341,9 @@ std::vector<std::uint8_t> makeBattlefield(std::string_view presetId, int width, 
         const double radius = std::min({std::sqrt(cellCount / (0.4 * 3.14159265)), height / 2.0 - 2.0,
                                         (b.maxX() - b.minX()) / 2.0 - 2.0});
         const double cx = (width - 1) / 2.0, cy = (height - 1) / 2.0;
-        std::bernoulli_distribution coin(0.4);
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < half; ++x)
-                if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= radius * radius && coin(rng)) b.set(x, y);
+                if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= radius * radius && chance(rng, 0.4)) b.set(x, y);
         b.mirror();
         return b.take();
     }

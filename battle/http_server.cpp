@@ -112,29 +112,6 @@ Response Response::error(int status, const std::string& message) {
     return json("{\"error\":\"" + jsonEscape(message) + "\"}", status);
 }
 
-std::string jsonEscape(const std::string& text) {
-    std::string out;
-    out.reserve(text.size());
-    for (const char c : text) {
-        switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    std::snprintf(buf, sizeof buf, "\\u%04x", c);
-                    out += buf;
-                } else {
-                    out += c;
-                }
-        }
-    }
-    return out;
-}
-
 void Server::route(const std::string& method, const std::string& path, Handler handler) {
     routes_.push_back({method, path, std::move(handler)});
 }

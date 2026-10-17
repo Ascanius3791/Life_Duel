@@ -69,6 +69,8 @@ function savePrefs() {
 // Server communication
 // ---------------------------------------------------------------------------
 async function api(path, options) {
+  // The static build (GitHub Pages) has no server: static-backend.js answers in the browser.
+  if (window.lifeDuelBackend) return window.lifeDuelBackend.request(path, options);
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);

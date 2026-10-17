@@ -292,7 +292,33 @@ static void testFastBattle() {
     CHECK(mismatches == 0);
 }
 
+// The random battlefields must be the same on every platform: bots are trained
+// on a battlefield given by its seed, and the browser (WebAssembly) build and
+// both peers of an online game regenerate it from that seed. These fingerprints
+// were taken with the original libstdc++ <random> distributions.
+static void testBattlefieldsArePortable() {
+    struct Case {
+        const char* preset;
+        int w, h, count;
+        std::uint64_t seed, fnv;
+    };
+    const Case cases[] = {
+        {"random_mirror", 260, 128, 900, 1, 0xafafdafc53e5e807ull},
+        {"random_rotational", 360, 176, 900, 123456789, 0xf42be7a25858ba8full},
+        {"random", 200, 100, 5000, 7, 0x903324589628937dull},
+        {"reactor", 260, 128, 900, 4503599627370496ull, 0x21f7e464bf12b203ull},
+        {"reactor", 77, 33, 5000, 0, 0x19340c0188f29c11ull},
+    };
+    for (const auto& c : cases) {
+        std::uint64_t h = 1469598103934665603ull;
+        for (auto cell : makeBattlefield(c.preset, c.w, c.h, c.count, c.seed)) h = (h ^ cell) * 1099511628211ull;
+        if (h != c.fnv) std::printf("battlefield %s seed %llu differs\n", c.preset, (unsigned long long)c.seed);
+        CHECK(h == c.fnv);
+    }
+}
+
 int main() {
+    testBattlefieldsArePortable();
     testClassic();
     testBattle();
     testFastBattle();

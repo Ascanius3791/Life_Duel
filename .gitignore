@@ -1,4 +1,6 @@
 build/
+build-wasm/
+dist/
 cmake-build-*/
 .vscode/
 .idea/

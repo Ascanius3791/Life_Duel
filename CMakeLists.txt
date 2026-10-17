@@ -34,6 +34,27 @@ add_library(gol_core
 )
 target_include_directories(gol_core PUBLIC core/include)
 
+# --- WebAssembly build for the static web site (GitHub Pages) ---------------
+# Configured with Emscripten (emcmake cmake -B build-wasm), only the battle
+# engine and the core tests are built; tools/build_site.sh assembles the site.
+if(EMSCRIPTEN)
+  add_executable(life_duel_engine battle/wasm_engine.cpp battle/api_json.cpp)
+  target_link_libraries(life_duel_engine PRIVATE gol_core)
+  target_link_options(life_duel_engine PRIVATE
+    -sMODULARIZE=1 -sEXPORT_NAME=createLifeDuelEngine -sENVIRONMENT=worker,node
+    -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432
+    "-sEXPORTED_FUNCTIONS=['_engine_config','_engine_battlefield','_engine_battle','_engine_step','_malloc','_free']"
+    "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8']")
+
+  # The same core tests, run under node: the engine must behave exactly as natively.
+  enable_testing()
+  add_executable(core_tests tests/core_tests.cpp)
+  target_link_libraries(core_tests PRIVATE gol_core)
+  target_link_options(core_tests PRIVATE -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=node)
+  add_test(NAME core_tests COMMAND core_tests)
+  return()
+endif()
+
 # --- Classic Game of Life with a native GUI (SFML) -------------------------
 find_package(SFML 2.5 COMPONENTS graphics window system QUIET)
 if(SFML_FOUND)
@@ -49,7 +70,7 @@ endif()
 
 # --- 1v1 colour battle, served to the browser -------------------------------
 find_package(Threads REQUIRED)
-add_executable(life_battle battle/main.cpp battle/http_server.cpp)
+add_executable(life_battle battle/main.cpp battle/api_json.cpp battle/http_server.cpp)
 target_link_libraries(life_battle PRIVATE gol_core Threads::Threads)
 target_compile_definitions(life_battle PRIVATE
   GOL_WEB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/battle/web"

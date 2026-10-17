@@ -2,6 +2,7 @@
 // happens here in C++; the browser only handles placement and rendering.
 #include "gol/battle.hpp"
 #include "gol/patterns.hpp"
+#include "api_json.hpp"
 #include "http_server.hpp"
 
 #include <unistd.h>
@@ -24,21 +25,11 @@
 
 namespace {
 
+using duel::configJson;
+using duel::frameJson;
 using web::jsonEscape;
 using web::Request;
 using web::Response;
-
-struct BoardSize {
-    const char* id;
-    const char* name;
-    int width;
-    int height;
-};
-constexpr BoardSize kSizes[] = {
-    {"small", "Small (200 x 100)", 200, 100},
-    {"medium", "Medium (260 x 128)", 260, 128},
-    {"large", "Large (360 x 176)", 360, 176},
-};
 
 // ---------------------------------------------------------------------------
 // Sessions: one running battle each, kept in least-recently-used order.
@@ -90,95 +81,6 @@ private:
     std::unordered_map<std::string, Entry> map_;
     std::mt19937_64 rng_{std::random_device{}()};
 };
-
-// ---------------------------------------------------------------------------
-// JSON helpers
-// ---------------------------------------------------------------------------
-std::string patternJson(const gol::Pattern& p, int cost) {
-    std::ostringstream o;
-    o << "{\"id\":\"" << jsonEscape(p.id) << "\",\"name\":\"" << jsonEscape(p.name) << "\",\"category\":\""
-      << jsonEscape(p.category) << "\",\"description\":\"" << jsonEscape(p.description) << "\",\"cost\":" << cost
-      << ",\"width\":" << p.width << ",\"height\":" << p.height << ",\"cells\":[";
-    for (std::size_t i = 0; i < p.cells.size(); ++i) {
-        if (i) o << ',';
-        o << '[' << p.cells[i].x << ',' << p.cells[i].y << ']';
-    }
-    o << "]}";
-    return o.str();
-}
-
-std::string configJson() {
-    std::ostringstream o;
-    o << "{\"arsenal\":[";
-    bool first = true;
-    for (const auto& item : gol::battleArsenal()) {
-        const gol::Pattern* p = gol::findPattern(item.patternId);
-        if (!p) continue;
-        if (!first) o << ',';
-        first = false;
-        o << patternJson(*p, item.cost);
-    }
-    o << "],\"presets\":[";
-    first = true;
-    for (const auto& preset : gol::battlefieldPresets()) {
-        if (!first) o << ',';
-        first = false;
-        o << "{\"id\":\"" << jsonEscape(preset.id) << "\",\"name\":\"" << jsonEscape(preset.name)
-          << "\",\"description\":\"" << jsonEscape(preset.description)
-          << "\",\"usesCount\":" << (preset.usesCount ? "true" : "false") << '}';
-    }
-    o << "],\"sizes\":[";
-    first = true;
-    for (const auto& s : kSizes) {
-        if (!first) o << ',';
-        first = false;
-        o << "{\"id\":\"" << s.id << "\",\"name\":\"" << s.name << "\",\"width\":" << s.width
-          << ",\"height\":" << s.height << '}';
-    }
-    o << "]}";
-    return o.str();
-}
-
-// At most this many history points are sent; long (e.g. unlimited) battles are sampled evenly.
-constexpr std::size_t kMaxHistoryPoints = 4000;
-
-void appendHistory(std::ostringstream& o, const char* name, const std::vector<std::size_t>& gens,
-                   const std::vector<int>& values) {
-    o << '"' << name << "\":[";
-    for (std::size_t i = 0; i < gens.size(); ++i) {
-        if (i) o << ',';
-        o << values[gens[i]];
-    }
-    o << ']';
-}
-
-std::string frameJson(const std::string& id, const gol::Battle& b, bool includeBoard) {
-    std::ostringstream o;
-    o << "{\"id\":\"" << id << "\",\"gen\":" << b.generation() << ",\"maxGen\":" << b.config().maxGenerations
-      << ",\"red\":" << b.redCount() << ",\"blue\":" << b.blueCount() << ",\"grey\":" << b.greyCount()
-      << ",\"finished\":" << (b.finished() ? "true" : "false") << ",\"winner\":\"" << gol::toString(b.winner())
-      << "\",\"reason\":\"" << gol::toString(b.endReason()) << "\",\"period\":" << b.period()
-      << ",\"redScore\":" << b.redScore() << ",\"blueScore\":" << b.blueScore();
-    if (includeBoard) o << ",\"board\":\"" << gol::encodeBoard(b.cells()) << '"';
-    if (b.finished()) {
-        const std::size_t n = b.redHistory().size();
-        const std::size_t stride = (n + kMaxHistoryPoints - 1) / kMaxHistoryPoints;
-        std::vector<std::size_t> gens;
-        for (std::size_t g = 0; g < n; g += stride) gens.push_back(g);
-        if (gens.back() != n - 1) gens.push_back(n - 1);
-        o << ",\"history\":{\"gen\":[";
-        for (std::size_t i = 0; i < gens.size(); ++i) o << (i ? "," : "") << gens[i];
-        o << "],";
-        appendHistory(o, "red", gens, b.redHistory());
-        o << ',';
-        appendHistory(o, "blue", gens, b.blueHistory());
-        o << ',';
-        appendHistory(o, "grey", gens, b.greyHistory());
-        o << '}';
-    }
-    o << '}';
-    return o.str();
-}
 
 // ---------------------------------------------------------------------------
 // Bots: leagues trained by life_arena. The server does not interpret them; it
@@ -345,18 +247,14 @@ int main(int argc, char** argv) {
         const int h = static_cast<int>(r.intParam("h", 128, 20, 600));
         const int count = static_cast<int>(r.intParam("count", 800, 0, 200000));
         const auto seed = static_cast<std::uint64_t>(r.intParam("seed", 1, 0, 1LL << 52));
-        const auto board = gol::makeBattlefield(r.param("preset", "random_mirror"), w, h, count, seed);
-        return Response::json("{\"width\":" + std::to_string(w) + ",\"height\":" + std::to_string(h) +
-                              ",\"board\":\"" + gol::encodeBoard(board) + "\"}");
+        return Response::json(duel::battlefieldJson(r.param("preset", "random_mirror"), w, h, count, seed));
     });
 
     server.route("POST", "/api/battle", [&](const Request& r) {
-        gol::BattleConfig cfg;
-        cfg.width = static_cast<int>(r.intParam("w", 260, 50, 1000));
-        cfg.height = static_cast<int>(r.intParam("h", 128, 20, 600));
         // maxgen=0: no limit, only elimination or repetition ends the battle.
-        cfg.maxGenerations = static_cast<int>(r.intParam("maxgen", 2000, 0, 10000000));
-        cfg.variant = r.param("variant") == "contagion" ? gol::Variant::Contagion : gol::Variant::BirthOnly;
+        const gol::BattleConfig cfg = duel::battleConfig(
+            static_cast<int>(r.intParam("w", 260, 50, 1000)), static_cast<int>(r.intParam("h", 128, 20, 600)),
+            static_cast<int>(r.intParam("maxgen", 2000, 0, 10000000)), r.param("variant"));
         std::vector<std::uint8_t> cells(static_cast<std::size_t>(cfg.width) * cfg.height);
         if (!gol::decodeBoard(r.body, cells)) return Response::error(400, "board does not match the size");
         auto session = std::make_shared<Session>(gol::Battle(cfg, std::move(cells)));
