@@ -226,43 +226,69 @@ static void testBattle() {
     }
 }
 
+// Runs both engines side by side and compares every generation cell by cell,
+// and the result at the end. Returns false (and prints `what`) on a mismatch.
+static bool sameAsReference(const BattleConfig& cfg, const std::vector<std::uint8_t>& cells, const char* what) {
+    Battle slow(cfg, cells);
+    FastBattle fast(cfg, cells);
+    while (true) {
+        if (fast.cells() != slow.cells() || fast.redCount() != slow.redCount() ||
+            fast.blueCount() != slow.blueCount() || fast.greyCount() != slow.greyCount() ||
+            fast.finished() != slow.finished() || fast.generation() != slow.generation()) {
+            std::printf("  fast engine differs (%s): %dx%d variant=%d gen=%d\n", what, cfg.width, cfg.height,
+                        static_cast<int>(cfg.variant), slow.generation());
+            return false;
+        }
+        if (slow.finished()) {
+            if (fast.winner() != slow.winner() || fast.endReason() != slow.endReason() ||
+                fast.period() != slow.period() || fast.redScore() != slow.redScore() ||
+                fast.blueScore() != slow.blueScore()) {
+                std::printf("  fast engine result differs (%s): %dx%d\n", what, cfg.width, cfg.height);
+                return false;
+            }
+            return true;
+        }
+        slow.step();
+        fast.step();
+    }
+}
+
 // The bit-parallel engine must match the reference engine cell by cell,
-// including word boundaries (widths around multiples of 64) and both variants.
+// including word boundaries (widths around multiples of 64), tile boundaries
+// (heights around multiples of 4, more than 256 rows = more than one mask
+// word per column) and both variants.
 static void testFastBattle() {
     std::mt19937_64 rng(7);
     int mismatches = 0;
+    std::uniform_int_distribution<int> pct(0, 99), colour(1, 3);
+    auto soup = [&](int w, int h, int density) {
+        std::vector<std::uint8_t> cells(static_cast<std::size_t>(w) * h);
+        for (auto& c : cells) c = pct(rng) < density ? static_cast<std::uint8_t>(colour(rng)) : std::uint8_t{Dead};
+        return cells;
+    };
     for (const int w : {1, 5, 63, 64, 65, 130, 200})
         for (const Variant v : {Variant::BirthOnly, Variant::Contagion})
-            for (const int density : {15, 40}) {
-                const int h = 37;
-                std::vector<std::uint8_t> cells(static_cast<std::size_t>(w) * h);
-                std::uniform_int_distribution<int> pct(0, 99), colour(1, 3);
-                for (auto& c : cells) c = pct(rng) < density ? static_cast<std::uint8_t>(colour(rng)) : std::uint8_t{Dead};
-                const BattleConfig cfg{w, h, v, 400};
-                Battle slow(cfg, cells);
-                FastBattle fast(cfg, cells);
-                while (true) {
-                    if (fast.cells() != slow.cells() || fast.redCount() != slow.redCount() ||
-                        fast.blueCount() != slow.blueCount() || fast.greyCount() != slow.greyCount() ||
-                        fast.finished() != slow.finished()) {
-                        std::printf("  fast engine differs: w=%d variant=%d density=%d gen=%d\n", w,
-                                    static_cast<int>(v), density, slow.generation());
-                        ++mismatches;
-                        break;
-                    }
-                    if (slow.finished()) {
-                        if (fast.winner() != slow.winner() || fast.endReason() != slow.endReason() ||
-                            fast.period() != slow.period() || fast.redScore() != slow.redScore() ||
-                            fast.blueScore() != slow.blueScore()) {
-                            std::printf("  fast engine result differs: w=%d\n", w);
-                            ++mismatches;
-                        }
-                        break;
-                    }
-                    slow.step();
-                    fast.step();
+            for (const int density : {15, 40})
+                mismatches += !sameAsReference({w, 37, v, 400}, soup(w, 37, density), "soup");
+    for (const int h : {1, 2, 3, 4, 5, 8, 9, 300})
+        for (const Variant v : {Variant::BirthOnly, Variant::Contagion})
+            mismatches += !sameAsReference({70, h, v, 300}, soup(70, h, 30), "height");
+
+    // Sparse armies on the battlefield presets: long runs that end in still
+    // lifes or oscillators of various periods (pulsars: 3, pentadecathlons: 15),
+    // so the skipping of unchanged tiles and the repetition check are exercised.
+    for (const auto& preset : battlefieldPresets())
+        for (const Variant v : {Variant::BirthOnly, Variant::Contagion}) {
+            const int w = 160, h = 96;
+            auto cells = makeBattlefield(preset.id, w, h, 400, 11);
+            const Zones z = zonesFor(w);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) {
+                    const bool left = x < z.leftEnd, right = x >= z.rightStart;
+                    if ((left || right) && pct(rng) < 12) cells[static_cast<std::size_t>(y) * w + x] = left ? Red : Blue;
                 }
-            }
+            mismatches += !sameAsReference({w, h, v, 1500}, cells, preset.id.c_str());
+        }
     CHECK(mismatches == 0);
 }
 

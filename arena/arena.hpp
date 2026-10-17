@@ -111,6 +111,9 @@ private:
 // Text form of an army: "gosper_gun@3,10,r1,m0;block@40,60,r0,m0".
 std::string formatPieces(const Arena& arena, const Army& army);
 bool parsePieces(const Arena& arena, const std::string& text, Army& army);
+// Identifies an army by content: equal keys mean equal boards. Pieces are
+// sorted, since their order does not change the board.
+std::string armyKey(const Arena& arena, const Army& army);
 
 // Approximate maximin (Nash) mixture of a symmetric zero-sum game with payoff
 // matrix m[i][j] (= -m[j][i]), found by regret matching+ self-play.

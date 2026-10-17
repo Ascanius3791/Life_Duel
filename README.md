@@ -22,6 +22,11 @@ cmake --build build -j
 ctest --test-dir build        # core tests
 ```
 
+By default the build is tuned for the building machine (`-march=native`,
+option `GOL_NATIVE`), which makes bot training noticeably faster through
+AVX2/AVX-512 and POPCNT. For binaries that must run on other/older CPUs,
+configure with `-DGOL_NATIVE=OFF`.
+
 ## Running
 
 ```bash
@@ -78,7 +83,8 @@ while it is still being trained.
 ./build/life_arena show --league league.txt                    # armies with their Nash weights
 ./build/life_arena show --league league.txt 12                 # draw army #12
 ./build/life_arena match --league league.txt 12 7              # #12 as red against #7 as blue
-./build/life_arena bench                                       # engine speed comparison
+./build/life_arena bench                                       # engine speed comparison (random armies)
+./build/life_arena bench --league league.txt                   # ... on battles between league armies
 ```
 
 How it works:
@@ -103,9 +109,22 @@ How it works:
 - Training is resumable: the league is saved after every iteration, and
   `league.txt.json` holds the mixture and all armies (red and blue
   placements) for other programs.
-- Battles run on `gol::FastBattle`, a bit-parallel engine (64 cells per
-  machine word, about 15× faster than the reference `gol::Battle`, checked
-  cell by cell against it in the tests), on all cores.
+- Battles run on `gol::FastBattle` on all cores. It is checked cell by cell
+  against the reference `gol::Battle` in the tests and is about 100-250×
+  faster than it on one thread (1-3 ms for a 2000-generation battle on
+  260×128):
+  - bit planes (alive, red, blue), 64 cells per word, stored in columns so
+    that a SIMD vector holds 4 rows of one column (one AVX2 register); the
+    neighbours are counted with a bit-sliced full-adder tree;
+  - only tiles (64×4 cells) whose neighbourhood changed are recomputed: a
+    tile whose surroundings equal those of two generations ago gets the
+    state it had one generation ago, which is already in the back buffer.
+    Empty space, still lifes and period-2 oscillators cost nothing;
+  - cell counts and the repetition hash are updated from the changed words
+    only (the hash is a sum of per-word hashes).
+- The search never plays a battle twice: league armies take their scores
+  from the payoff matrix, and an army that comes up again in a search
+  reuses its scores (results are identical to replaying).
 
 ## Layout
 
