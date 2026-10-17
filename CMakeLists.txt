@@ -80,7 +80,7 @@ add_custom_command(TARGET life_battle POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/assets/leagues $<TARGET_FILE_DIR:life_battle>/leagues)
 
 # --- Bot training: self-play league on a fixed battlefield --------------------
-add_library(gol_arena arena/arena.cpp arena/league.cpp)
+add_library(gol_arena arena/arena.cpp arena/league.cpp arena/training.cpp)
 target_include_directories(gol_arena PUBLIC arena)
 target_link_libraries(gol_arena PUBLIC gol_core Threads::Threads)
 add_executable(life_arena arena/main.cpp)

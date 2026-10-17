@@ -7,10 +7,7 @@
 
 namespace arena {
 
-namespace {
-
-// Writes to a temporary file first so an interrupted save never destroys the league.
-bool writeAtomically(const std::string& path, const std::string& content, std::string& error) {
+bool writeTextFile(const std::string& path, const std::string& content, std::string& error) {
     const std::string tmp = path + ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
@@ -30,6 +27,17 @@ bool writeAtomically(const std::string& path, const std::string& content, std::s
     }
     return true;
 }
+
+bool readTextFile(const std::string& path, std::string& content) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    content = ss.str();
+    return true;
+}
+
+namespace {
 
 std::string jsonString(const std::string& s) {
     std::string out = "\"";
@@ -108,12 +116,12 @@ bool writeLeague(const std::string& path, const Arena& arena, const std::vector<
             if (c == '\t' || c == '\n' || c == '\r') c = ' ';
         out << "army\t" << origin << '\t' << formatPieces(arena, a) << '\n';
     }
-    return writeAtomically(path, out.str(), error);
+    return writeTextFile(path, out.str(), error);
 }
 
 bool writeLeagueJson(const std::string& path, const Arena& arena, const std::vector<Army>& armies,
                      const std::vector<double>& meta, const std::vector<std::vector<double>>& payoff,
-                     std::string& error) {
+                     std::string& error, const std::string& extra) {
     const Settings& s = arena.settings();
     std::ostringstream out;
     out << "{\n  \"version\": 1,\n  \"settings\": {\"width\": " << s.width << ", \"height\": " << s.height
@@ -141,8 +149,10 @@ bool writeLeagueJson(const std::string& path, const Arena& arena, const std::vec
             << ", \"cost\": " << arena.cost(armies[i]) << ",\n     \"red\": " << pieces(armies[i], false)
             << ",\n     \"blue\": " << pieces(armies[i], true) << "}";
     }
-    out << "\n  ]\n}\n";
-    return writeAtomically(path, out.str(), error);
+    out << "\n  ]";
+    if (!extra.empty()) out << ",\n  " << extra;
+    out << "\n}\n";
+    return writeTextFile(path, out.str(), error);
 }
 
 }  // namespace arena

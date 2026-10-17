@@ -28,9 +28,16 @@ bool readLeague(const std::string& path, LeagueFile& out, std::string& error);
 bool writeLeague(const std::string& path, const Arena& arena, const std::vector<Army>& armies, std::string& error);
 
 // Machine-readable export for other programs (e.g. a browser bot): settings,
-// the Nash mixture and every army's placements for both colours.
+// the Nash mixture and every army's placements for both colours. `extra`
+// (optional) holds further top-level members, e.g. "\"training\": {...}";
+// readers ignore what they do not know.
 bool writeLeagueJson(const std::string& path, const Arena& arena, const std::vector<Army>& armies,
                      const std::vector<double>& meta, const std::vector<std::vector<double>>& payoff,
-                     std::string& error);
+                     std::string& error, const std::string& extra = "");
+
+// Writes to a temporary file first and renames it, so an interrupted save never
+// leaves a half-written file.
+bool writeTextFile(const std::string& path, const std::string& content, std::string& error);
+bool readTextFile(const std::string& path, std::string& content);
 
 }  // namespace arena

@@ -143,6 +143,7 @@ every push to `main` and deploys `dist/` to GitHub Pages. In the repository's
 
 ```bash
 ./build/life_arena train --league league.txt --iterations 50   # creates or resumes league.txt
+./build/life_arena train --twins --league league.txt           # twin leagues, stops by itself (see below)
 ./build/life_arena show --league league.txt                    # armies with their Nash weights
 ./build/life_arena show --league league.txt 12                 # draw army #12
 ./build/life_arena match --league league.txt 12 7              # #12 as red against #7 as blue
@@ -168,7 +169,10 @@ How it works:
   Because new armies must beat the mixture, not just the last champion,
   rock-paper-scissors cycles cannot make the league forget what it learned.
 - **gain** in the log is the best score the search reaches against the
-  mixture. It falls as the league gets harder to exploit.
+  mixture. It falls as the league gets harder to exploit, but on open
+  battlefields it stays high for a long time, so it is no stopping criterion
+  (and comparing a league with its own older versions says nothing: PSRO
+  never makes the mixture worse against them).
 - Training is resumable: the league is saved after every iteration, and
   `league.txt.json` holds the mixture and all armies (red and blue
   placements) for other programs.
@@ -189,6 +193,53 @@ How it works:
   from the payoff matrix, and an army that comes up again in a search
   reuses its scores (results are identical to replaying).
 
+### Twin training (`train --twins`)
+
+Twin training answers "when is the league good enough?":
+
+- **Two leagues, A and B,** are trained with the same settings but different
+  search seeds (`--rng N` for A, N+1000 for B). Both searches run in lockstep
+  in one process and every search generation of both is played as one batch,
+  which keeps the cores busy when the Nash support is small. A is exactly the
+  league a single run with `--rng N` would produce.
+- **Cross-evaluation** every `--eval-every K` iterations (default 5):
+  `xA` is the best score any army of B reaches against A's Nash mixture (same
+  scoring as the league), `xB` the same the other way round. B never trained
+  against A, so `xA` is a lower bound on how exploitable A really is, and it
+  measures whether A's strength generalises to strategies it has never seen.
+  The search gain is a rough upper estimate (the search may also fail to find
+  what B found, so on small searches xA can exceed the gain). The payoffs
+  between the twins are cached; only armies added since the last evaluation
+  play.
+- **Stopping rules,** checked at every evaluation, the first one wins and is
+  logged:
+  1. *converged:* `xA` and `xB` are both below `--eps` (default 0.05);
+  2. *plateau:* max(`xA`, `xB`), averaged over the last 3 evaluations, has
+     not dropped by `--delta` (default 0.02) below its best value for
+     `--patience` evaluations in a row (default 6). The best value can only
+     drop by delta at a time, so this always ends a run;
+  3. *budget:* `--iterations N` (here a maximum, default 1000) or
+     `--max-hours H` of this run; a final evaluation is made first.
+- **Output:** at every evaluation and at the end, `FILE` and `FILE.json`
+  hold the **union of A and B** with the Nash mixture over the union (origins
+  end in "(A)" or "(B)"), so a long run is always usable. `FILE.json` gets an
+  extra `training` member (settings of the rules, stop reason and the
+  evaluation curve) that the browser ignores. Everything else lives in
+  `FILE.twins/`, which is not offered as a bot (`life_battle` and the static
+  site only take `*.json` directly in `assets/leagues/`):
+  `A.txt`, `B.txt` (the twins, saved after every iteration), `state.txt`
+  (iteration, elapsed time) and `eval.csv` (iteration, gainA, gainB, xA, xB,
+  league and support sizes, elapsed seconds).
+- Running the same command again resumes from `FILE.twins/` (the stop rules
+  see the whole history). `--iterations 0` just re-evaluates and rewrites
+  `FILE`. A `FILE` that exists without `FILE.twins/` is never overwritten.
+
+```bash
+./build/life_arena train --twins --league assets/leagues/open-twins-260x128.txt \
+    --preset empty --size 260x128 --budget 120 --maxgen 2000 \
+    --support 12 --pop 48 --gens 30 --max-hours 10
+```
+
 ## Layout
 
 ```
@@ -205,7 +256,7 @@ battle/     life_battle: HTTP server + JSON API (api_json.* is shared with the W
     static-backend.js, engine-worker.js   the /api/ calls answered in the browser (static site only)
 tools/      build_site.sh: WebAssembly build + static site in dist/
 .github/workflows/pages.yml   CI: native build + tests, static site, GitHub Pages deploy
-arena/      life_arena: armies, mutation, matches, Nash solver, league training
+arena/      life_arena: armies, mutation, matches, Nash solver, league and twin training
 tests/      core_tests, arena_tests; web/ browser tests (Playwright scripts, usage in their headers)
 assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mode
 ```
