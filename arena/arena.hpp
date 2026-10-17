@@ -7,6 +7,7 @@
 #include "gol/battle.hpp"
 #include "gol/patterns.hpp"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <random>
@@ -43,6 +44,10 @@ struct Settings {
     gol::Variant variant = gol::Variant::BirthOnly;
 };
 
+// Generations at which play() records the cell counts, so that cheap short
+// battles can be compared with full ones.
+constexpr std::array<int, 6> kTraceGenerations{50, 100, 200, 400, 800, 1200};
+
 // Outcome of one battle, scored from Red's point of view in [-1, 1]:
 // 0.7 for the result (win +, loss -, draw 0) plus 0.3 times the final margin
 // (red - blue) / (red + blue). The margin rewards near-wins and punishes
@@ -53,6 +58,9 @@ struct MatchResult {
     int generation = 0;
     double redScore = 0, blueScore = 0;
     double score = 0;
+    // Red and blue cells at each of kTraceGenerations (the final counts if the
+    // battle ended earlier).
+    std::array<int, kTraceGenerations.size()> redAt{}, blueAt{};
 };
 
 class Arena {

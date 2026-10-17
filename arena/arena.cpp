@@ -231,8 +231,13 @@ std::vector<std::uint8_t> Arena::board(const Army& red, const Army& blue) const 
 MatchResult Arena::play(const Army& red, const Army& blue) const {
     const gol::BattleConfig config{settings_.width, settings_.height, settings_.variant, settings_.maxGenerations};
     gol::FastBattle battle(config, board(red, blue));
-    battle.runToEnd();
     MatchResult r;
+    for (std::size_t k = 0; k < kTraceGenerations.size(); ++k) {
+        battle.advance(kTraceGenerations[k] - battle.generation());
+        r.redAt[k] = battle.redCount();
+        r.blueAt[k] = battle.blueCount();
+    }
+    battle.runToEnd();
     r.winner = battle.winner();
     r.reason = battle.endReason();
     r.generation = battle.generation();

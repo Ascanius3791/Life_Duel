@@ -1,5 +1,7 @@
 #include "training.hpp"
 
+#include "match_log.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -8,13 +10,31 @@
 
 namespace arena {
 
+namespace {
+MatchLog* matchLog = nullptr;
+
+// Arena::payoff, with every battle recorded in the log.
+double loggedPayoff(const Arena& arena, const Army& a, const Army& b) {
+    const MatchResult r = arena.play(a, b);
+    matchLog->record(a, b, r);
+    if (arena.symmetry() != Arena::Symmetry::None) return r.score;
+    const MatchResult swapped = arena.play(b, a);
+    matchLog->record(b, a, swapped);
+    return (r.score - swapped.score) / 2;
+}
+}  // namespace
+
+void setMatchLog(MatchLog* log) { matchLog = log; }
+
 void playJobs(const Arena& arena, const std::vector<MatchJob>& jobs, int threads) {
+    if (matchLog) matchLog->beginBatch();
     parallelFor(static_cast<int>(jobs.size()), threads, [&](int k) {
         const MatchJob& job = jobs[static_cast<std::size_t>(k)];
-        const double v = arena.payoff(*job.a, *job.b);
+        const double v = matchLog ? loggedPayoff(arena, *job.a, *job.b) : arena.payoff(*job.a, *job.b);
         *job.out = v;
         if (job.neg) *job.neg = -v;  // zero-sum and symmetric: the swapped battle is the mirror image
     });
+    if (matchLog) matchLog->flush();
 }
 
 double expectedScore(const Matrix& m, int i, const std::vector<double>& meta) {

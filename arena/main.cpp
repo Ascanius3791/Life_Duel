@@ -13,6 +13,7 @@
 // the other, when that stops improving, or when the budget is spent.
 #include "arena.hpp"
 #include "league.hpp"
+#include "match_log.hpp"
 #include "training.hpp"
 
 #include "gol/battle.hpp"
@@ -25,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <sstream>
@@ -65,6 +67,7 @@ struct Options {
     std::vector<int> ids;  // positional numbers for show / match
     bool showBoard = false;
     int battles = 20;
+    std::string logMatches;
 };
 
 void usage() {
@@ -110,6 +113,11 @@ void usage() {
         "  --patience N       dropped by X (default 0.02) for N evaluations in a row (default 6)\n"
         "  --iterations N     with --twins: the maximum for this run (default 1000)\n"
         "  --max-hours H      with --twins: stop after H hours of this run (default: no limit)\n"
+        "\n"
+        "Training data:\n"
+        "  --log-matches P    train: record every battle in P.armies.tsv and P.matches.csv (appends)\n"
+        "  life_arena raster --league FILE --log-matches P\n"
+        "                     write the logged armies' red-zone bitmaps to P.raster.bin (+ P.raster.json)\n"
         "\n"
         "Other:\n"
         "  --board            match: print the starting board in the browser's run-length format\n"
@@ -166,6 +174,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--threads") o.threads = std::max(1, integer());
         else if (a == "--rng") o.rng = std::strtoull(value().c_str(), nullptr, 10);
         else if (a == "--board") o.showBoard = true;
+        else if (a == "--log-matches") o.logMatches = value();
         else if (a == "--battles") o.battles = std::max(1, integer());
         else if (a == "-h" || a == "--help") return false;
         else if (!a.empty() && a[0] != '-') o.ids.push_back(std::atoi(a.c_str()));
@@ -292,6 +301,25 @@ void printMixture(const Arena& arena, const std::vector<Army>& armies, const std
 // ---------------------------------------------------------------------------
 // train
 // ---------------------------------------------------------------------------
+// The battle log of one training run; playJobs stops using it when it goes away.
+struct RunLog {
+    MatchLog log;
+    ~RunLog() { setMatchLog(nullptr); }
+};
+
+// Starts recording battles if --log-matches was given.
+bool openMatchLog(const Options& o, const Arena& arena, RunLog& run) {
+    MatchLog& log = run.log;
+    if (o.logMatches.empty()) return true;
+    if (!log.open(arena, o.logMatches)) {
+        std::fprintf(stderr, "cannot write %s.armies.tsv / .matches.csv\n", o.logMatches.c_str());
+        return false;
+    }
+    setMatchLog(&log);
+    std::printf("recording battles in %s.matches.csv\n", o.logMatches.c_str());
+    return true;
+}
+
 int train(const Options& o) {
     Settings settings = o.settings;
     std::vector<std::pair<std::string, std::string>> raw;
@@ -305,6 +333,8 @@ int train(const Options& o) {
     else std::printf("resuming %s with %zu armies\n", o.league.c_str(), parsed.size());
     LeagueTrainer league(arena, std::move(parsed), resumed, o.rng, o.seeds);
     printSettings(arena, o.threads);
+    RunLog log;
+    if (!openMatchLog(o, arena, log)) return 1;
 
     auto t0 = Clock::now();
     computePayoffs({&league}, o.threads);
@@ -432,6 +462,8 @@ int trainTwins(const Options& o) {
     if (o.maxHours > 0) std::printf(" or %.2f hours", o.maxHours);
     std::printf("\n");
     printSettings(arena, o.threads);
+    RunLog log;
+    if (!openMatchLog(o, arena, log)) return 1;
 
     const auto t0 = Clock::now();
     auto elapsed = [&] { return secondsBefore + secondsSince(t0); };
@@ -598,6 +630,71 @@ int show(const Options& o) {
     return 0;
 }
 
+// Cell bitmaps of the logged armies for model training: P.raster.bin holds,
+// for every army of P.armies.tsv in id order, its red zone (zone width x height
+// cells, row by row) packed 8 cells per byte, most significant bit first.
+// Rerunning appends only the armies that are new since the last run.
+int raster(const Options& o) {
+    Settings settings;
+    std::vector<std::pair<std::string, std::string>> raw;
+    if (!loadLeague(o, settings, raw, false)) return 1;
+    const Arena arena(settings);
+    if (o.logMatches.empty()) {
+        std::fprintf(stderr, "raster needs --log-matches P\n");
+        return 2;
+    }
+    const int w = settings.width, h = settings.height, zw = arena.zones().leftEnd;
+    const std::size_t bytes = (static_cast<std::size_t>(zw) * h + 7) / 8;
+    const std::string out = o.logMatches + ".raster.bin";
+    std::error_code ec;
+    const auto existing = std::filesystem::exists(out) ? std::filesystem::file_size(out, ec) : 0;
+    const std::size_t done = existing / bytes;
+    std::filesystem::resize_file(out, done * bytes, ec);  // drops a partial record
+
+    std::ifstream in(o.logMatches + ".armies.tsv");
+    std::FILE* f = std::fopen(out.c_str(), "ab");
+    if (!in || !f) {
+        std::fprintf(stderr, "cannot read %s.armies.tsv or write %s\n", o.logMatches.c_str(), out.c_str());
+        return 1;
+    }
+    std::string line;
+    std::size_t id = 0, added = 0;
+    std::vector<std::uint8_t> packed(bytes);
+    while (std::getline(in, line)) {
+        if (id++ < done) continue;
+        Army army;
+        const auto tab = line.find('\t');
+        if (tab == std::string::npos || !parsePieces(arena, line.substr(tab + 1), army)) {
+            std::fprintf(stderr, "bad army line %zu\n", id - 1);
+            std::fclose(f);
+            return 1;
+        }
+        const auto cells = arena.board(army, Army{});
+        std::fill(packed.begin(), packed.end(), 0);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < zw; ++x)
+                if (cells[static_cast<std::size_t>(y) * w + x] == gol::Red) {
+                    const std::size_t k = static_cast<std::size_t>(y) * zw + x;
+                    packed[k / 8] |= static_cast<std::uint8_t>(0x80 >> (k % 8));
+                }
+        std::fwrite(packed.data(), 1, bytes, f);
+        ++added;
+    }
+    std::fclose(f);
+    const char* symmetry = arena.symmetry() == Arena::Symmetry::Mirror     ? "mirror"
+                           : arena.symmetry() == Arena::Symmetry::Rotation ? "rotation"
+                                                                           : "none";
+    std::FILE* meta = std::fopen((o.logMatches + ".raster.json").c_str(), "w");
+    if (meta) {
+        std::fprintf(meta, "{\"width\": %d, \"height\": %d, \"zoneWidth\": %d, \"armies\": %zu, \"symmetry\": \"%s\", "
+                           "\"preset\": \"%s\", \"maxGenerations\": %d}\n",
+                     w, h, zw, done + added, symmetry, settings.preset.c_str(), settings.maxGenerations);
+        std::fclose(meta);
+    }
+    std::printf("%s: %zu armies (%zu new), %d x %d cells each\n", out.c_str(), done + added, added, zw, h);
+    return 0;
+}
+
 int match(const Options& o) {
     Settings settings;
     std::vector<std::pair<std::string, std::string>> raw;
@@ -708,6 +805,7 @@ int main(int argc, char** argv) {
     if (o.command == "train") return o.twins ? trainTwins(o) : train(o);
     if (o.command == "show") return show(o);
     if (o.command == "match") return match(o);
+    if (o.command == "raster") return raster(o);
     if (o.command == "bench") return bench(o);
     usage();
     return 2;

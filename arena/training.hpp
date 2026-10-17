@@ -30,6 +30,9 @@ struct MatchJob {
     double* neg = nullptr;
 };
 void playJobs(const Arena& arena, const std::vector<MatchJob>& jobs, int threads);
+// While set, playJobs records every battle it plays in `log` (nullptr stops it).
+class MatchLog;
+void setMatchLog(MatchLog* log);
 
 // Expected score of army i (row i of m) against a mixture.
 double expectedScore(const Matrix& m, int i, const std::vector<double>& meta);

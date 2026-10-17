@@ -240,6 +240,19 @@ Twin training answers "when is the league good enough?":
     --support 12 --pop 48 --gens 30 --max-hours 10
 ```
 
+### Battle logs and the result predictor (experimental)
+
+`train --log-matches P` records every battle (both armies, the score, and the
+red/blue cell counts after 50, 100, 200, 400, 800 and 1200 generations) in
+`P.armies.tsv` and `P.matches.csv`; logging does not change the training.
+`life_arena raster --league FILE --log-matches P` adds the armies' cell
+bitmaps. `tools/surrogate/study.py --prefix P` (PyTorch) then measures how well
+a learnt model and shortened battles predict the outcome on the newest battles,
+in terms that matter for the search: rank correlation inside a search
+generation, how often the best candidate survives a pre-selection of the top
+quarter, and how near-identical armies are told apart. Logs go to `data/`,
+which is not committed.
+
 ## Layout
 
 ```
