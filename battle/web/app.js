@@ -17,7 +17,7 @@ const SNAP_DISTANCE = 12;  // cells beyond the own zone in which a dragged patte
 const S = {
   config: null,
   arsenal: new Map(),
-  settings: { sizeId: 'medium', w: 260, h: 128, budget: 120, maxGen: 2000, variant: 'birth', blind: true },
+  settings: { sizeId: 'medium', w: 260, h: 128, budget: 120, maxGen: 2000, unlimited: false, variant: 'birth', blind: true },
   field: { preset: 'random_mirror', count: 900, seed: newSeed() },
   grey: null,
   placements: [],
@@ -26,6 +26,8 @@ const S = {
   phase: 'prep',        // 'prep' | 'battle'
   turn: 'red',          // blind placement: 'red' | 'blue' | 'done'
   ready: { red: false, blue: false },
+  open: 'red',          // whose arsenal drawer is unfolded: 'red' | 'blue' | null
+  focus: false,         // focus mode: the board fills the screen
   drag: null,           // pattern currently being placed
   pointer: null,        // last known pointer cell on the board
   battle: null,
@@ -145,6 +147,7 @@ function isActive(owner) {
 // The owner that keyboard shortcuts apply to when nothing is being dragged.
 function focusOwner() {
   if (S.drag) return S.drag.owner;
+  if (S.open && isActive(S.open)) return S.open;
   if (S.settings.blind) return S.turn === 'done' ? null : S.turn;
   const active = ['red', 'blue'].filter(isActive);
   return active.length === 1 ? active[0] : null;
@@ -259,6 +262,7 @@ function resize() {
     for (let y = 0; y <= h; y++) g.fillRect(view.ox, view.oy + Math.round(y * cs) - (lw >> 1), w * cs, lw);
   }
   S.dirty = true;
+  layoutDrawers();
 }
 
 function render() {
@@ -422,7 +426,7 @@ function drawCardPreviews(owner) {
     const pattern = S.arsenal.get(card.dataset.id);
     const shape = oriented(pattern, S.orient[owner]);
     const c = $('canvas', card);
-    const cw = 56, ch = 30;
+    const cw = 64, ch = 36;
     c.width = cw * dpr;
     c.height = ch * dpr;
     const g = c.getContext('2d');
@@ -446,9 +450,15 @@ function updateSides() {
     $('.budget-fill', side).style.width = `${Math.max(0, left / budget) * 100}%`;
     $('.budget-text', side).innerHTML = hidden ? '<b>?</b> pts' : `<b>${left}</b> / ${budget} pts`;
     const active = isActive(owner);
-    side.classList.toggle('active', active);
-    side.classList.toggle('inactive', !active);
+    const open = S.open === owner && active;
+    side.classList.toggle('folded', !open);
     side.classList.toggle('is-ready', S.ready[owner]);
+    side.inert = !open;
+    const tab = $(`#tab${cap(owner)}`);
+    tab.classList.toggle('open', open);
+    tab.disabled = !active;
+    $('.tab-state', tab).textContent = S.ready[owner] ? 'ready ✓' : (active ? 'arsenal' : 'waiting');
+    tab.title = active ? `Open ${cap(owner)}'s arsenal (A)` : (S.ready[owner] ? `${cap(owner)} is ready` : `${cap(owner)} places after ${owner === 'red' ? 'Blue' : 'Red'}`);
     for (const card of $$('.card', side)) {
       const pattern = S.arsenal.get(card.dataset.id);
       card.classList.toggle('unaffordable', pattern.cost > left);
@@ -468,6 +478,8 @@ function updateSides() {
     $('[data-act=clear]', side).disabled = !active || !hasArmy;
   }
   $('#btnStart').disabled = !(S.ready.red && S.ready.blue);
+  document.body.classList.toggle('dragging', !!S.drag);
+  updateFocusAvailability();
   updatePhaseLabel();
 }
 
@@ -508,7 +520,47 @@ function changeOrientation(owner, act) {
   S.dirty = true;
 }
 
+// Only one arsenal is unfolded at a time; it opens over the opponent's area.
+function openDrawer(owner) {
+  if (owner && !isActive(owner)) return;
+  if (S.drag && S.drag.owner !== owner) endDrag();
+  S.open = owner;
+  hideTooltip();
+  updateSides();
+  S.dirty = true;
+}
+
+function toggleDrawer() {
+  if (S.phase !== 'prep') return;
+  if (S.open && isActive(S.open)) return openDrawer(null);
+  const candidates = S.settings.blind ? [S.turn] : ['red', 'blue'];
+  openDrawer(candidates.find(isActive) || null);
+}
+
+// Places each arsenal over the zone of the opponent: Red's covers Blue's area
+// at the right edge of the board, Blue's covers Red's area on the left.
+function layoutDrawers() {
+  const stage = $('#stage').getBoundingClientRect();
+  const cr = canvas.getBoundingClientRect();
+  if (!stage.width || !view.dpr) return;
+  const k = 1 / view.dpr;
+  const bx = cr.left - stage.left + view.ox * k, by = cr.top - stage.top + view.oy * k;
+  const bw = S.settings.w * view.cs * k, bh = S.settings.h * view.cs * k;
+  const zonePx = zones().zw * view.cs * k;
+  const width = Math.min(Math.max(zonePx, 310), stage.width - 24);
+  const height = Math.min(Math.max(bh, 420), stage.height - 12);
+  const top = Math.max(6, Math.min(by, stage.height - height - 6));
+  const right = Math.min(bx + bw, stage.width - 6), left = Math.max(bx, 6);
+  const px = v => `${Math.round(v)}px`;
+  Object.assign($('#sideRed').style, { left: px(right - width), top: px(top), width: px(width), height: px(height) });
+  Object.assign($('#sideBlue').style, { left: px(left), top: px(top), width: px(width), height: px(height) });
+  const tabTop = px(top + Math.min(24, height / 4));
+  Object.assign($('#tabRed').style, { left: px(right - 34), top: tabTop });
+  Object.assign($('#tabBlue').style, { left: px(left), top: tabTop });
+}
+
 function onSideAction(owner, act) {
+  if (act === 'fold') return openDrawer(null);
   if (['rotl', 'rotr', 'mirror', 'vflip'].includes(act)) return changeOrientation(owner, act);
   if (act === 'undo') {
     const own = S.placements.filter(p => p.owner === owner);
@@ -526,12 +578,17 @@ function setReady(owner) {
   if (S.drag && S.drag.owner === owner) endDrag();
   const hasArmy = S.placements.some(p => p.owner === owner);
   if (!S.ready[owner] && !hasArmy && !confirm(`${cap(owner)} has not placed anything and would lose immediately. Ready anyway?`)) return;
+  const other = owner === 'red' ? 'blue' : 'red';
   if (S.settings.blind) {
     if (S.turn !== owner) return;
     S.ready[owner] = true;
     S.turn = owner === 'red' ? 'blue' : 'done';
+    S.open = S.turn === 'done' ? null : S.turn;
   } else {
     S.ready[owner] = !S.ready[owner];
+    // Hand the screen over to the other player, or fold everything away once both are done.
+    if (S.ready[owner]) S.open = S.ready[other] ? null : other;
+    else S.open = owner;
   }
   updateSides();
   updateScoreboard();
@@ -544,6 +601,7 @@ function resetPreparation({ clearArmies }) {
   S.turn = 'red';
   S.ready = { red: false, blue: false };
   S.drag = null;
+  S.open = 'red';
   document.body.classList.remove('battle');
   $('#centerPrep').hidden = false;
   $('#centerBattle').hidden = true;
@@ -715,8 +773,9 @@ function updateScoreboard() {
     const f = S.battle.frame;
     ({ red, blue, grey } = f);
     redSub = blueSub = '';
-    $('#genLabel').textContent = `Generation ${fmt(f.gen)} / ${fmt(f.maxGen)}`;
-    $('#genProgress').style.width = `${Math.min(100, (f.gen / f.maxGen) * 100)}%`;
+    $('#genLabel').textContent = `Generation ${fmt(f.gen)} / ${f.maxGen ? fmt(f.maxGen) : '∞'}`;
+    $('#genProgress').style.width = f.maxGen ? `${Math.min(100, (f.gen / f.maxGen) * 100)}%` : '0%';
+    $('#genProgressBar').classList.toggle('endless', !f.maxGen && !f.finished);
   } else {
     const board = prepBoard();
     red = blue = grey = 0;
@@ -725,7 +784,8 @@ function updateScoreboard() {
     blueSub = isHidden('blue') ? '' : `${remaining('blue')} pts left`;
     $('#genLabel').textContent = 'Preparation';
     $('#genProgress').style.width = '0%';
-    $('#rateLabel').textContent = `limit ${fmt(S.settings.maxGen)} gens`;
+    $('#genProgressBar').classList.remove('endless');
+    $('#rateLabel').textContent = S.settings.unlimited ? 'no generation limit' : `limit ${fmt(S.settings.maxGen)} gens`;
   }
   const showRed = !isHidden('red'), showBlue = !isHidden('blue');
   $('#scoreRed').textContent = showRed ? fmt(red) : '?';
@@ -739,7 +799,7 @@ function updateScoreboard() {
 }
 
 function drawSpark(owner) {
-  const c = $(`#side${cap(owner)} .spark`);
+  const c = $(`#spark${cap(owner)}`);
   const data = S.battle ? S.battle.live[owner] : [];
   const dpr = window.devicePixelRatio || 1;
   const w = c.clientWidth, h = c.clientHeight;
@@ -753,13 +813,13 @@ function drawSpark(owner) {
   const max = Math.max(1, ...sample(all, 2000).map(p => p[1]));
   const lastGen = data[data.length - 1][0] || 1;
   const pts = sample(data, Math.round(w));
-  const X = gen => (gen / lastGen) * (w - 2) + 1, Y = v => h - 4 - (v / max) * (h - 10);
+  const X = gen => (gen / lastGen) * (w - 2) + 1, Y = v => h - 2 - (v / max) * (h - 5);
   g.beginPath();
   pts.forEach(([gen, v], i) => (i ? g.lineTo(X(gen), Y(v)) : g.moveTo(X(gen), Y(v))));
   g.strokeStyle = COLOR[owner];
-  g.lineWidth = 2;
+  g.lineWidth = 1.5;
   g.shadowColor = COLOR[owner];
-  g.shadowBlur = 8;
+  g.shadowBlur = 5;
   g.stroke();
   g.shadowBlur = 0;
   g.lineTo(X(pts[pts.length - 1][0]), h);
@@ -783,10 +843,10 @@ function sample(arr, n) {
 // Battle
 // ---------------------------------------------------------------------------
 async function startBattle(encoded) {
-  const { w, h, maxGen, variant } = S.settings;
+  const { w, h, maxGen, unlimited, variant } = S.settings;
   const body = encoded || encodeBoard(prepBoard());
   try {
-    const frame = await api(`/api/battle?w=${w}&h=${h}&maxgen=${maxGen}&variant=${variant}`, { method: 'POST', body });
+    const frame = await api(`/api/battle?w=${w}&h=${h}&maxgen=${unlimited ? 0 : maxGen}&variant=${variant}`, { method: 'POST', body });
     S.drag = null;
     S.phase = 'battle';
     S.turn = 'done';
@@ -812,9 +872,9 @@ function applyFrame(frame) {
   if (frame.board) paintBoard(decodeBoard(frame.board, S.settings.w * S.settings.h));
   const last = b.live.red[b.live.red.length - 1];
   if (frame.history) {
-    // The final frame carries the complete history (also covers skipped generations).
-    b.live.red = frame.history.red.map((v, i) => [i, v]);
-    b.live.blue = frame.history.blue.map((v, i) => [i, v]);
+    // The final frame carries the (sampled) history, which also covers skipped generations.
+    b.live.red = frame.history.red.map((v, i) => [frame.history.gen[i], v]);
+    b.live.blue = frame.history.blue.map((v, i) => [frame.history.gen[i], v]);
   } else if (!last || last[0] !== frame.gen) {
     b.live.red.push([frame.gen, frame.red]);
     b.live.blue.push([frame.gen, frame.blue]);
@@ -822,10 +882,13 @@ function applyFrame(frame) {
   const now = performance.now();
   b.rate.push([now, frame.gen]);
   while (b.rate.length > 2 && now - b.rate[0][0] > 1000) b.rate.shift();
-  for (const owner of ['red', 'blue']) {
-    $(`#side${cap(owner)} .count`).textContent = fmt(frame[owner]);
-    drawSpark(owner);
+  // Very long (unlimited) battles: keep the live sparkline data bounded.
+  if (b.live.red.length > 6000) {
+    b.live.red = b.live.red.filter((_, i) => i % 2 === 0);
+    b.live.blue = b.live.blue.filter((_, i) => i % 2 === 0);
   }
+  drawSpark('red');
+  drawSpark('blue');
   updateScoreboard();
   $('#rateLabel').textContent = `${fmt(measuredRate())} gen/s`;
   if (frame.finished) {
@@ -890,15 +953,19 @@ async function skipToEnd() {
   b.turbo = false;
   b.skipping = true;
   updateBattleControls();
+  b.stopSkip = false;
   const dialog = $('#skipDialog');
+  $('#skipProgressBar').classList.toggle('endless', !b.frame.maxGen);
+  $('#skipText').textContent = '';
   dialog.showModal();
   try {
     if (b.pending) await b.pending;
     let frame = b.frame;
-    while (!frame.finished && S.battle === b) {
+    while (!frame.finished && S.battle === b && !b.stopSkip) {
       frame = await api(`/api/step?id=${b.id}&ms=150&board=0`);
-      $('#skipProgress').style.width = `${(frame.gen / frame.maxGen) * 100}%`;
-      $('#skipText').textContent = `Generation ${fmt(frame.gen)} of ${fmt(frame.maxGen)} · Red ${fmt(frame.red)} · Blue ${fmt(frame.blue)}`;
+      $('#skipProgress').style.width = frame.maxGen ? `${(frame.gen / frame.maxGen) * 100}%` : '100%';
+      const of = frame.maxGen ? ` of ${fmt(frame.maxGen)}` : ' (no limit)';
+      $('#skipText').textContent = `Generation ${fmt(frame.gen)}${of} · Red ${fmt(frame.red)} · Blue ${fmt(frame.blue)}`;
     }
     if (S.battle === b) {
       b.skipping = false;
@@ -1038,10 +1105,11 @@ function drawResultChart(history) {
   g.clearRect(0, 0, w, h);
   if (!history) return;
   const n = history.red.length;
+  const lastGen = history.gen[n - 1] || 1;
   // Scale to the armies; the grey line may leave the chart at the top.
   const max = Math.max(1, ...history.red, ...history.blue) * 1.15;
   const pad = { l: 44, r: 12, t: 12, b: 24 };
-  const X = i => pad.l + (n > 1 ? i / (n - 1) : 0) * (w - pad.l - pad.r);
+  const X = i => pad.l + (history.gen[i] / lastGen) * (w - pad.l - pad.r);
   const Y = v => h - pad.b - (v / max) * (h - pad.t - pad.b);
 
   g.strokeStyle = '#1e2638';
@@ -1057,7 +1125,7 @@ function drawResultChart(history) {
   g.textAlign = 'left';
   g.fillText('0', pad.l, h - 6);
   g.textAlign = 'right';
-  g.fillText(`generation ${fmt(n - 1)}`, w - pad.r, h - 6);
+  g.fillText(`generation ${fmt(history.gen[n - 1])}`, w - pad.r, h - 6);
 
   const step = Math.max(1, Math.floor(n / (w * 2)));
   const plot = (values, color, width, dash) => {
@@ -1091,6 +1159,8 @@ function openSettings() {
   $('#setSize').value = s.sizeId;
   $('#setBudget').value = s.budget;
   $('#setMaxGen').value = s.maxGen;
+  $('#setUnlimited').checked = s.unlimited;
+  $('#setMaxGen').disabled = s.unlimited;
   $('#setBlind').checked = s.blind;
   for (const r of $$('input[name=variant]')) r.checked = r.value === s.variant;
   $('#settingsDialog').showModal();
@@ -1105,7 +1175,8 @@ function applySettings() {
   s.w = size.width;
   s.h = size.height;
   s.budget = Math.max(1, Math.min(10000, Math.round(+$('#setBudget').value || 120)));
-  s.maxGen = Math.max(10, Math.min(100000, Math.round(+$('#setMaxGen').value || 2000)));
+  s.maxGen = Math.max(10, Math.min(10000000, Math.round(+$('#setMaxGen').value || 2000)));
+  s.unlimited = $('#setUnlimited').checked;
   s.blind = $('#setBlind').checked;
   s.variant = ($$('input[name=variant]').find(r => r.checked) || {}).value || 'birth';
   // Drop the most recent placements of a side that no longer fits the budget.
@@ -1125,6 +1196,46 @@ function applySettings() {
     loadBattlefield();
   }
   boardChanged();
+}
+
+// ---------------------------------------------------------------------------
+// Focus mode: once both armies are set, the board can take the whole screen.
+// Scoreboard and controls float above it and fade out while the mouse rests.
+// ---------------------------------------------------------------------------
+const focusAvailable = () => S.phase === 'battle' || (S.ready.red && S.ready.blue);
+
+function updateFocusAvailability() {
+  const ok = focusAvailable();
+  $('#btnFocus').disabled = !ok;
+  if (!ok && S.focus) setFocus(false);
+}
+
+function setFocus(on) {
+  if (on && !focusAvailable()) return;
+  if (on === S.focus) return;
+  S.focus = on;
+  document.body.classList.toggle('focus', on);
+  document.body.classList.remove('idle');
+  $('#btnFocus').title = on ? 'Leave focus mode (F / Esc)' : 'Focus mode: maximise the board (F)';
+  if (on) {
+    const el = document.documentElement;
+    if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => { /* windowed focus is fine too */ });
+    armIdle();
+  } else if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+let idleTimer = 0;
+function armIdle() {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  if (!S.focus) return;
+  idleTimer = setTimeout(() => {
+    const busy = document.querySelector('.controlbar:hover, .scoreboard:hover, dialog[open]');
+    if (busy) armIdle();
+    else document.body.classList.add('idle');
+  }, 2500);
 }
 
 function newGame() {
@@ -1165,6 +1276,13 @@ function wire() {
   $('#btnTurbo').addEventListener('click', toggleTurbo);
   $('#btnSkip').addEventListener('click', skipToEnd);
   $('#btnRestart').addEventListener('click', () => S.battle && startBattle(S.battle.encoded));
+  $('#btnSkipStop').addEventListener('click', () => { if (S.battle) S.battle.stopSkip = true; });
+  $('#skipDialog').addEventListener('cancel', e => { e.preventDefault(); if (S.battle) S.battle.stopSkip = true; });
+  $('#btnFocus').addEventListener('click', () => setFocus(!S.focus));
+  for (const owner of ['red', 'blue']) $(`#tab${cap(owner)}`).addEventListener('click', () => openDrawer(owner));
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) setFocus(false); });
+  document.addEventListener('pointermove', armIdle);
+  $('#setUnlimited').addEventListener('change', e => { $('#setMaxGen').disabled = e.target.checked; });
   $('#btnBackToPrep').addEventListener('click', () => { S.battle = null; resetPreparation({ clearArmies: false }); });
 
   $('#btnResultView').addEventListener('click', () => $('#resultDialog').close());
@@ -1181,7 +1299,11 @@ function wire() {
   $('#btnRulesClose').addEventListener('click', () => $('#rulesDialog').close());
   $('#btnNew').addEventListener('click', newGame);
 
-  window.addEventListener('resize', () => { resize(); if (S.battle) { drawSpark('red'); drawSpark('blue'); } updateSpeedUi(); });
+  new ResizeObserver(() => {
+    resize();
+    if (S.battle) { drawSpark('red'); drawSpark('blue'); }
+    updateSpeedUi();
+  }).observe($('#stage'));
   document.addEventListener('keydown', onKey);
 }
 
@@ -1190,11 +1312,15 @@ function onKey(e) {
   if (e.target.matches('input, select, textarea')) return;
   const key = e.key;
   if (key === 'h' || key === '?') { $('#rulesDialog').showModal(); return; }
+  const isF = key === 'f' || key === 'F';
 
   if (S.phase === 'prep') {
     if (key === 'Escape' && S.drag) endDrag();
+    else if (key === 'Escape' && S.focus) setFocus(false);
+    else if (isF && focusAvailable()) setFocus(!S.focus);
+    else if (key === 'a' || key === 'A') toggleDrawer();
     else if (key === 'r' || key === 'R') changeOrientation(focusOwner(), e.shiftKey ? 'rotl' : 'rotr');
-    else if (key === 'f' || key === 'F') changeOrientation(focusOwner(), 'mirror');
+    else if (isF) changeOrientation(focusOwner(), 'mirror');
     else if (key === 'v' || key === 'V') changeOrientation(focusOwner(), 'vflip');
     else if ((e.ctrlKey || e.metaKey) && key === 'z') { const o = focusOwner(); if (o) onSideAction(o, 'undo'); }
     else return;
@@ -1208,6 +1334,8 @@ function onKey(e) {
   else if (key === '+' || key === '=') window.speedNudge(1);
   else if (key === '-' || key === '_') window.speedNudge(-1);
   else if (key === 'm' || key === 'M') toggleTurbo();
+  else if (isF) setFocus(!S.focus);
+  else if (key === 'Escape' && S.focus) setFocus(false);
   else return;
   e.preventDefault();
 }

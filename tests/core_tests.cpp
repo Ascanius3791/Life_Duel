@@ -174,6 +174,17 @@ static void testBattle() {
         CHECK(b.winner() == Winner::Blue);
         CHECK(b.redHistory().size() == 11);
     }
+    // No generation limit: the glider flies into the dead edge, settles, and the frozen board ends it.
+    {
+        BattleConfig c4{60, 60, Variant::BirthOnly, 0};
+        auto cells = board(60, 60, {{2, 2, Red}, {3, 2, Red}, {2, 3, Red}, {3, 3, Red}});
+        const Pattern& glider = *findPattern("glider");
+        for (auto p : glider.cells) cells[static_cast<std::size_t>(30 + p.y) * 60 + 30 + p.x] = Blue;
+        Battle b(c4, cells);
+        CHECK(b.unlimited());
+        b.advance(100000);
+        CHECK(b.finished() && b.endReason() == EndReason::Repetition && b.generation() > 50);
+    }
 
     // Board encoding round trip.
     {

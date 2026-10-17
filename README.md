@@ -62,7 +62,7 @@ assets/     DejaVu fonts for the native GUI
 |---|---|
 | `GET /api/config` | arsenal (patterns + costs), battlefield presets, board sizes |
 | `GET /api/battlefield?w&h&preset&count&seed` | generated grey battlefield |
-| `POST /api/battle?w&h&maxgen&variant` (body = board) | start a battle, returns the first frame |
+| `POST /api/battle?w&h&maxgen&variant` (body = board) | start a battle, returns the first frame (`maxgen=0`: no limit) |
 | `GET /api/step?id&n=K` or `&ms=T` | advance K generations, or as many as fit into T ms; `board=0` omits the board |
 
 Boards are sent as run-length text: `.` dead, `r` red, `b` blue, `g` grey, each

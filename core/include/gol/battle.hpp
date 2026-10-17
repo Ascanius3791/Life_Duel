@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -34,6 +35,7 @@ struct BattleConfig {
     int width = 260;
     int height = 128;
     Variant variant = Variant::BirthOnly;
+    // 0 = no limit: the battle only ends by elimination or repetition.
     int maxGenerations = 2000;
 };
 
@@ -62,6 +64,7 @@ public:
     int advance(int generations);
     // Advances until roughly `milliseconds` have elapsed or the battle ends.
     int advanceFor(double milliseconds);
+    // Runs until the battle is decided. Without a generation limit this may never return.
     void runToEnd();
 
     int generation() const { return generation_; }
@@ -70,6 +73,7 @@ public:
     int greyCount() const { return grey_; }
 
     bool finished() const { return winner_ != Winner::None; }
+    bool unlimited() const { return config_.maxGenerations == 0; }
     Winner winner() const { return winner_; }
     EndReason endReason() const { return reason_; }
     // Length of the detected cycle (1 = still life) when reason is Repetition.
@@ -99,7 +103,12 @@ private:
     int period_ = 0;
     double redScore_ = 0, blueScore_ = 0;
     std::vector<int> redHistory_, blueHistory_, greyHistory_;
-    std::unordered_map<std::uint64_t, int> seen_;  // state hash -> generation
+    // Hashes of the last kRepetitionWindow boards (hash -> generation). Any cycle
+    // up to that period is still detected at the moment it first repeats, while
+    // memory stays bounded in battles without a generation limit.
+    static constexpr std::size_t kRepetitionWindow = 1 << 16;
+    std::unordered_map<std::uint64_t, int> seen_;
+    std::deque<std::uint64_t> seenOrder_;
 };
 
 // Neutral grey battlefield generation. Cells are only placed in the middle

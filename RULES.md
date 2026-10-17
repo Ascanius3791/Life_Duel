@@ -52,6 +52,9 @@ Nobody gets to act once the battle has started.
    Every moving pattern in the arsenal starts out flying (or shooting) towards
    the opponent: Red's face east, Blue's are mirrored to face west. You can
    rotate and mirror them freely.
+   Your arsenal opens **over your opponent's area**, so it never covers the
+   area you are building in. Only one arsenal is open at a time, and it can
+   be folded away to a small tab at the board edge (`A`).
 4. With **blind placement** (on by default) Red places first while Blue looks
    away, then Blue places while Red's area is hidden. Neither player sees the
    other's army until the battle starts. With blind placement off, both
@@ -119,7 +122,8 @@ The battle ends as soon as one of these happens:
    number of red and blue cells over one full cycle decides, so oscillators
    are judged fairly. A frozen board is a cycle of length 1.
 3. **Generation limit** (default 2000): the colour with more living cells wins.
-   Equal counts are a draw.
+   Equal counts are a draw. The limit can be set to **∞** in Settings. The
+   battle then runs until one army is wiped out or the board repeats.
 
 > Rules are perfectly symmetric. Two mirror-image armies on a symmetric
 > battlefield therefore always end in a draw. You have to be different to win!
@@ -139,6 +143,8 @@ The battle ends as soon as one of these happens:
 | Speed | Drag the speed slider (1–1000 generations per second), mouse wheel over it, `+` / `−` |
 | Maximum speed | **⚡ Max** or `M`: as fast as the C++ engine can compute, rendering frames as they come |
 | Jump to the result | **⏭** |
+| Fold / unfold the arsenal | `A`, the » / « button, or the tab at the board edge |
+| Focus mode (once both armies are ready) | **⛶ Focus** or `F`: the board fills the screen, controls fade out while the mouse rests. `Esc` leaves it |
 | Rules | `H` |
 
 ---

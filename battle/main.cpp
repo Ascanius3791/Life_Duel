@@ -135,11 +135,15 @@ std::string configJson() {
     return o.str();
 }
 
-void appendHistory(std::ostringstream& o, const char* name, const std::vector<int>& values) {
+// At most this many history points are sent; long (e.g. unlimited) battles are sampled evenly.
+constexpr std::size_t kMaxHistoryPoints = 4000;
+
+void appendHistory(std::ostringstream& o, const char* name, const std::vector<std::size_t>& gens,
+                   const std::vector<int>& values) {
     o << '"' << name << "\":[";
-    for (std::size_t i = 0; i < values.size(); ++i) {
+    for (std::size_t i = 0; i < gens.size(); ++i) {
         if (i) o << ',';
-        o << values[i];
+        o << values[gens[i]];
     }
     o << ']';
 }
@@ -153,12 +157,19 @@ std::string frameJson(const std::string& id, const gol::Battle& b, bool includeB
       << ",\"redScore\":" << b.redScore() << ",\"blueScore\":" << b.blueScore();
     if (includeBoard) o << ",\"board\":\"" << gol::encodeBoard(b.cells()) << '"';
     if (b.finished()) {
-        o << ",\"history\":{";
-        appendHistory(o, "red", b.redHistory());
+        const std::size_t n = b.redHistory().size();
+        const std::size_t stride = (n + kMaxHistoryPoints - 1) / kMaxHistoryPoints;
+        std::vector<std::size_t> gens;
+        for (std::size_t g = 0; g < n; g += stride) gens.push_back(g);
+        if (gens.back() != n - 1) gens.push_back(n - 1);
+        o << ",\"history\":{\"gen\":[";
+        for (std::size_t i = 0; i < gens.size(); ++i) o << (i ? "," : "") << gens[i];
+        o << "],";
+        appendHistory(o, "red", gens, b.redHistory());
         o << ',';
-        appendHistory(o, "blue", b.blueHistory());
+        appendHistory(o, "blue", gens, b.blueHistory());
         o << ',';
-        appendHistory(o, "grey", b.greyHistory());
+        appendHistory(o, "grey", gens, b.greyHistory());
         o << '}';
     }
     o << '}';
@@ -248,7 +259,8 @@ int main(int argc, char** argv) {
         gol::BattleConfig cfg;
         cfg.width = static_cast<int>(r.intParam("w", 260, 50, 1000));
         cfg.height = static_cast<int>(r.intParam("h", 128, 20, 600));
-        cfg.maxGenerations = static_cast<int>(r.intParam("maxgen", 2000, 1, 100000));
+        // maxgen=0: no limit, only elimination or repetition ends the battle.
+        cfg.maxGenerations = static_cast<int>(r.intParam("maxgen", 2000, 0, 10000000));
         cfg.variant = r.param("variant") == "contagion" ? gol::Variant::Contagion : gol::Variant::BirthOnly;
         std::vector<std::uint8_t> cells(static_cast<std::size_t>(cfg.width) * cfg.height);
         if (!gol::decodeBoard(r.body, cells)) return Response::error(400, "board does not match the size");

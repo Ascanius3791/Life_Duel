@@ -25,6 +25,7 @@
     <div class="score red">
       <span class="label">Red</span>
       <span class="value" id="scoreRed">0</span>
+      <canvas class="spark" id="sparkRed"></canvas>
       <span class="sub" id="scoreRedSub"></span>
     </div>
     <div class="tug">
@@ -36,10 +37,11 @@
         <span class="dot">·</span>
         <span id="rateLabel">—</span>
       </div>
-      <div class="progress"><div id="genProgress"></div></div>
+      <div class="progress" id="genProgressBar"><div id="genProgress"></div></div>
     </div>
     <div class="score blue">
       <span class="sub" id="scoreBlueSub"></span>
+      <canvas class="spark" id="sparkBlue"></canvas>
       <span class="value" id="scoreBlue">0</span>
       <span class="label">Blue</span>
     </div>
@@ -48,20 +50,19 @@
   <main id="stage">
     <canvas id="board"></canvas>
     <div class="board-hint" id="boardHint"></div>
-  </main>
-
-  <footer class="dock">
-    <!-- Red player's side -->
-    <section class="side red" id="sideRed" data-owner="red">
-      <div class="side-head">
-        <h2>Red</h2>
-        <div class="budget"><div class="budget-bar"><div class="budget-fill"></div></div><span class="budget-text"></span></div>
-        <div class="orient" role="group" aria-label="Orientation">
-          <button class="icon" data-act="rotl" title="Rotate left (Shift+R)">↺</button>
-          <button class="icon" data-act="rotr" title="Rotate right (R)">↻</button>
-          <button class="icon" data-act="mirror" title="Mirror left/right (F)">⇋</button>
-          <button class="icon" data-act="vflip" title="Mirror up/down (V)">⇅</button>
-        </div>
+    <!-- Each arsenal opens over the opponent's area, so it never hides the zone being built. -->
+    <aside class="drawer red" id="sideRed" data-owner="red" aria-label="Red arsenal">
+      <div class="drawer-head">
+        <h2>Red army</h2>
+        <button class="icon fold" data-act="fold" title="Fold away (A)">»</button>
+      </div>
+      <div class="budget"><div class="budget-bar"><div class="budget-fill"></div></div><span class="budget-text"></span></div>
+      <div class="orient" role="group" aria-label="Orientation">
+        <span class="muted">Orientation</span>
+        <button class="icon" data-act="rotl" title="Rotate left (Shift+R)">↺</button>
+        <button class="icon" data-act="rotr" title="Rotate right (R)">↻</button>
+        <button class="icon" data-act="mirror" title="Mirror left/right (F)">⇋</button>
+        <button class="icon" data-act="vflip" title="Mirror up/down (V)">⇅</button>
       </div>
       <div class="cards"></div>
       <div class="side-foot">
@@ -69,29 +70,49 @@
         <button class="ghost small" data-act="clear">Clear</button>
         <button class="ready" data-act="ready">Ready</button>
       </div>
-      <div class="side-stats">
-        <div class="big"><span class="count">0</span><span class="unit">cells</span></div>
-        <canvas class="spark"></canvas>
+    </aside>
+    <button class="drawer-tab red" id="tabRed" data-owner="red"><span class="tab-label">Red</span><span class="tab-state"></span></button>
+    <aside class="drawer blue" id="sideBlue" data-owner="blue" aria-label="Blue arsenal">
+      <div class="drawer-head">
+        <h2>Blue army</h2>
+        <button class="icon fold" data-act="fold" title="Fold away (A)">«</button>
       </div>
-    </section>
+      <div class="budget"><div class="budget-bar"><div class="budget-fill"></div></div><span class="budget-text"></span></div>
+      <div class="orient" role="group" aria-label="Orientation">
+        <span class="muted">Orientation</span>
+        <button class="icon" data-act="rotl" title="Rotate left (Shift+R)">↺</button>
+        <button class="icon" data-act="rotr" title="Rotate right (R)">↻</button>
+        <button class="icon" data-act="mirror" title="Mirror left/right (F)">⇋</button>
+        <button class="icon" data-act="vflip" title="Mirror up/down (V)">⇅</button>
+      </div>
+      <div class="cards"></div>
+      <div class="side-foot">
+        <button class="ghost small" data-act="undo" title="Remove the last placed pattern (Ctrl+Z)">Undo</button>
+        <button class="ghost small" data-act="clear">Clear</button>
+        <button class="ready" data-act="ready">Ready</button>
+      </div>
+    </aside>
+    <button class="drawer-tab blue" id="tabBlue" data-owner="blue"><span class="tab-label">Blue</span><span class="tab-state"></span></button>
+  </main>
 
-    <!-- Centre: battlefield set-up during preparation, playback during battle -->
-    <section class="center" id="centerPrep">
-      <h3>Battlefield</h3>
-      <div class="row">
-        <select id="presetSelect" aria-label="Battlefield preset"></select>
-        <button class="icon" id="btnReroll" title="New random seed">⟳</button>
-      </div>
-      <div class="row" id="countRow">
+  <footer class="controlbar">
+    <!-- Preparation: battlefield set-up -->
+    <div class="bar-section" id="centerPrep">
+      <span class="bar-title">Battlefield</span>
+      <select id="presetSelect" aria-label="Battlefield preset"></select>
+      <button class="icon" id="btnReroll" title="New random seed">⟳</button>
+      <div class="count-row" id="countRow">
         <label for="countInput">Grey cells</label>
         <input type="range" id="countRange" min="0" max="4000" step="50">
         <input type="number" id="countInput" min="0" max="20000" step="50">
       </div>
-      <p class="muted" id="presetDesc"></p>
+      <p class="muted preset-desc" id="presetDesc"></p>
       <button class="start" id="btnStart" disabled>Start battle</button>
-    </section>
+    </div>
 
-    <section class="center" id="centerBattle" hidden>
+    <!-- Battle: playback -->
+    <div class="bar-section" id="centerBattle" hidden>
+      <button class="ghost small" id="btnBackToPrep" title="Edit the armies again">← Preparation</button>
       <div class="transport">
         <button class="icon big" id="btnRestart" title="Replay from generation 0">⏮</button>
         <button class="icon big primary" id="btnPlay" title="Play / pause (Space)">⏸</button>
@@ -108,32 +129,11 @@
           <div class="speed-ticks"><span>1</span><span>10</span><span>100</span><span>1000</span></div>
         </div>
       </div>
-      <button class="ghost small" id="btnBackToPrep">Back to preparation</button>
-    </section>
+    </div>
 
-    <!-- Blue player's side -->
-    <section class="side blue" id="sideBlue" data-owner="blue">
-      <div class="side-head">
-        <h2>Blue</h2>
-        <div class="budget"><div class="budget-bar"><div class="budget-fill"></div></div><span class="budget-text"></span></div>
-        <div class="orient" role="group" aria-label="Orientation">
-          <button class="icon" data-act="rotl" title="Rotate left (Shift+R)">↺</button>
-          <button class="icon" data-act="rotr" title="Rotate right (R)">↻</button>
-          <button class="icon" data-act="mirror" title="Mirror left/right (F)">⇋</button>
-          <button class="icon" data-act="vflip" title="Mirror up/down (V)">⇅</button>
-        </div>
-      </div>
-      <div class="cards"></div>
-      <div class="side-foot">
-        <button class="ghost small" data-act="undo" title="Remove the last placed pattern (Ctrl+Z)">Undo</button>
-        <button class="ghost small" data-act="clear">Clear</button>
-        <button class="ready" data-act="ready">Ready</button>
-      </div>
-      <div class="side-stats">
-        <div class="big"><span class="count">0</span><span class="unit">cells</span></div>
-        <canvas class="spark"></canvas>
-      </div>
-    </section>
+    <button class="focus-btn" id="btnFocus" title="Focus mode: maximise the board (F)" disabled>
+      <span class="focus-icon">⛶</span><span class="focus-text">Focus</span>
+    </button>
   </footer>
 
   <!-- Card tooltip -->
@@ -157,8 +157,11 @@
   <!-- Skip progress -->
   <dialog id="skipDialog" class="modal small">
     <h3>Fast-forwarding…</h3>
-    <div class="progress big"><div id="skipProgress"></div></div>
+    <div class="progress big" id="skipProgressBar"><div id="skipProgress"></div></div>
     <p class="muted" id="skipText"></p>
+    <div class="modal-actions">
+      <button class="ghost" id="btnSkipStop">Stop here</button>
+    </div>
   </dialog>
 
   <!-- Settings -->
@@ -171,9 +174,13 @@
       <label class="field">Starting points per player
         <input type="number" name="budget" id="setBudget" min="1" max="10000">
       </label>
-      <label class="field">Generation limit
-        <input type="number" name="maxGen" id="setMaxGen" min="10" max="100000" step="10">
-      </label>
+      <div class="field">Generation limit
+        <div class="limit-row">
+          <input type="number" name="maxGen" id="setMaxGen" min="10" max="10000000" step="10">
+          <label class="infinity"><input type="checkbox" id="setUnlimited"><span>∞</span> no limit</label>
+        </div>
+        <small class="muted">With no limit the battle only ends when an army is wiped out or the board repeats itself.</small>
+      </div>
       <fieldset class="field">
         <legend>Colour rule</legend>
         <label class="choice"><input type="radio" name="variant" value="birth">
@@ -220,7 +227,7 @@
         <h3>Winning</h3>
         <ul>
           <li>Wipe out every cell of the opponent's colour.</li>
-          <li>Otherwise, when the generation limit is reached, more cells wins.</li>
+          <li>Otherwise, when the generation limit is reached, more cells wins. The limit can also be set to <b>∞</b>.</li>
           <li>If the whole board repeats a previous state, the game ends early and the average number of cells over one cycle decides.</li>
         </ul>
       </section>
@@ -230,7 +237,8 @@
           <li><b>Drag</b> a card onto your area, or <b>click</b> a card and then click the board repeatedly. <b>Esc</b> or right-click stops placing.</li>
           <li><b>R</b> / <b>Shift+R</b> rotate, <b>F</b> mirror left/right, <b>V</b> mirror up/down. The mouse wheel rotates while placing.</li>
           <li><b>Right-click</b> a placed pattern to remove it and get the points back.</li>
-          <li>During the battle: <b>Space</b> play/pause, <b>→</b> single step, <b>+</b>/<b>−</b> speed, <b>M</b> max speed.</li>
+          <li><b>A</b> folds the arsenal away or brings it back.</li>
+          <li>During the battle: <b>Space</b> play/pause, <b>→</b> single step, <b>+</b>/<b>−</b> speed, <b>M</b> max speed, <b>F</b> focus mode (maximised board, <b>Esc</b> leaves it).</li>
         </ul>
       </section>
     </div>

@@ -144,7 +144,13 @@ void Battle::checkEnd() {
     // armies are judged fairly.
     const std::uint64_t h = hash();
     const auto [it, inserted] = seen_.emplace(h, generation_);
-    if (!inserted) {
+    if (inserted) {
+        seenOrder_.push_back(h);
+        if (seenOrder_.size() > kRepetitionWindow) {
+            seen_.erase(seenOrder_.front());
+            seenOrder_.pop_front();
+        }
+    } else {
         const int first = it->second;
         period_ = generation_ - first;
         double redSum = 0, blueSum = 0;
@@ -158,7 +164,7 @@ void Battle::checkEnd() {
         return;
     }
 
-    if (generation_ >= config_.maxGenerations) {
+    if (!unlimited() && generation_ >= config_.maxGenerations) {
         decideByScore(EndReason::GenerationLimit);
     }
 }
