@@ -18,6 +18,7 @@ add_library(gol_core
   core/src/life.cpp
   core/src/patterns.cpp
   core/src/battle.cpp
+  core/src/fast_battle.cpp
 )
 target_include_directories(gol_core PUBLIC core/include)
 
@@ -43,8 +44,18 @@ target_compile_definitions(life_battle PRIVATE
 add_custom_command(TARGET life_battle POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/battle/web $<TARGET_FILE_DIR:life_battle>/web)
 
+# --- Bot training: self-play league on a fixed battlefield --------------------
+add_library(gol_arena arena/arena.cpp arena/league.cpp)
+target_include_directories(gol_arena PUBLIC arena)
+target_link_libraries(gol_arena PUBLIC gol_core Threads::Threads)
+add_executable(life_arena arena/main.cpp)
+target_link_libraries(life_arena PRIVATE gol_arena)
+
 # --- Tests ------------------------------------------------------------------
 enable_testing()
 add_executable(core_tests tests/core_tests.cpp)
 target_link_libraries(core_tests PRIVATE gol_core)
 add_test(NAME core_tests COMMAND core_tests)
+add_executable(arena_tests tests/arena_tests.cpp)
+target_link_libraries(arena_tests PRIVATE gol_arena)
+add_test(NAME arena_tests COMMAND arena_tests)

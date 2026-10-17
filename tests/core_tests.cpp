@@ -1,10 +1,12 @@
 // Minimal self-contained tests for the simulation core.
 #include "gol/battle.hpp"
+#include "gol/fast_battle.hpp"
 #include "gol/life.hpp"
 #include "gol/patterns.hpp"
 
 #include <algorithm>
 #include <cstdio>
+#include <random>
 #include <set>
 #include <string>
 
@@ -224,9 +226,50 @@ static void testBattle() {
     }
 }
 
+// The bit-parallel engine must match the reference engine cell by cell,
+// including word boundaries (widths around multiples of 64) and both variants.
+static void testFastBattle() {
+    std::mt19937_64 rng(7);
+    int mismatches = 0;
+    for (const int w : {1, 5, 63, 64, 65, 130, 200})
+        for (const Variant v : {Variant::BirthOnly, Variant::Contagion})
+            for (const int density : {15, 40}) {
+                const int h = 37;
+                std::vector<std::uint8_t> cells(static_cast<std::size_t>(w) * h);
+                std::uniform_int_distribution<int> pct(0, 99), colour(1, 3);
+                for (auto& c : cells) c = pct(rng) < density ? static_cast<std::uint8_t>(colour(rng)) : std::uint8_t{Dead};
+                const BattleConfig cfg{w, h, v, 400};
+                Battle slow(cfg, cells);
+                FastBattle fast(cfg, cells);
+                while (true) {
+                    if (fast.cells() != slow.cells() || fast.redCount() != slow.redCount() ||
+                        fast.blueCount() != slow.blueCount() || fast.greyCount() != slow.greyCount() ||
+                        fast.finished() != slow.finished()) {
+                        std::printf("  fast engine differs: w=%d variant=%d density=%d gen=%d\n", w,
+                                    static_cast<int>(v), density, slow.generation());
+                        ++mismatches;
+                        break;
+                    }
+                    if (slow.finished()) {
+                        if (fast.winner() != slow.winner() || fast.endReason() != slow.endReason() ||
+                            fast.period() != slow.period() || fast.redScore() != slow.redScore() ||
+                            fast.blueScore() != slow.blueScore()) {
+                            std::printf("  fast engine result differs: w=%d\n", w);
+                            ++mismatches;
+                        }
+                        break;
+                    }
+                    slow.step();
+                    fast.step();
+                }
+            }
+    CHECK(mismatches == 0);
+}
+
 int main() {
     testClassic();
     testBattle();
+    testFastBattle();
     if (failures == 0) std::printf("All core tests passed.\n");
     return failures == 0 ? 0 : 1;
 }

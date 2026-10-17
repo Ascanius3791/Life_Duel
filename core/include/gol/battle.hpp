@@ -39,6 +39,11 @@ struct BattleConfig {
     int maxGenerations = 2000;
 };
 
+// Number of recent boards a battle remembers to detect repetition. Any cycle
+// up to that period is still detected at the moment it first repeats, while
+// memory stays bounded in battles without a generation limit.
+constexpr std::size_t kRepetitionWindow = 1 << 16;
+
 // The two starting areas and the battlefield between them.
 struct Zones {
     int zoneWidth;  // width of each player's area
@@ -103,10 +108,7 @@ private:
     int period_ = 0;
     double redScore_ = 0, blueScore_ = 0;
     std::vector<int> redHistory_, blueHistory_, greyHistory_;
-    // Hashes of the last kRepetitionWindow boards (hash -> generation). Any cycle
-    // up to that period is still detected at the moment it first repeats, while
-    // memory stays bounded in battles without a generation limit.
-    static constexpr std::size_t kRepetitionWindow = 1 << 16;
+    // Hashes of the last kRepetitionWindow boards (hash -> generation).
     std::unordered_map<std::uint64_t, int> seen_;
     std::deque<std::uint64_t> seenOrder_;
 };
