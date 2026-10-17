@@ -13,12 +13,14 @@ const COLOR = { red: '#ff4d6d', blue: '#3fa7ff', grey: '#8d96a8' };
 const RGB = { [RED]: [255, 77, 109], [BLUE]: [63, 167, 255], [GREY]: [141, 150, 168] };
 const SPEED_MIN = 1, SPEED_MAX = 1000;
 const SNAP_DISTANCE = 12;  // cells beyond the own zone in which a dragged pattern still snaps into it
+const DEFAULT_PRESET = 'hive_lattice';
+const PREFS_VERSION = 2;  // 2: the Hive lattice became the default battlefield
 
 const S = {
   config: null,
   arsenal: new Map(),
   settings: { sizeId: 'medium', w: 260, h: 128, budget: 120, maxGen: 2000, unlimited: false, variant: 'birth', blind: true },
-  field: { preset: 'random_mirror', count: 900, seed: newSeed() },
+  field: { preset: DEFAULT_PRESET, count: 900, seed: newSeed() },
   grey: null,
   placements: [],
   nextId: 1,
@@ -33,9 +35,10 @@ const S = {
   battle: null,
   speed: 30,
   dirty: true,
-  mode: 'duo',          // 'duo': two players at one screen | 'bot': one player against a trained bot | 'online': see online.js
+  mode: 'duo',          // 'duo': two players at one screen | 'bot': one player against a trained bot | 'watch': two armies of a league | 'online': see online.js
   bots: [],             // leagues the server offers: [{ id }]
   bot: { id: null, league: null, side: 'blue', level: 'hard', army: null, limit: null },
+  watch: { pick: { red: 'nash', blue: 'nash' }, shown: { red: null, blue: null } },
   duo: null,            // the two-player settings, kept aside while vs Bot or online mode replaces them
 };
 
@@ -47,11 +50,13 @@ function newSeed() { return Math.floor(Math.random() * 1e9); }
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem('lifeDuel.prefs') || '{}');
+    const current = p.v === PREFS_VERSION;  // older prefs: keep everything but the battlefield and the bot
     if (p.settings) Object.assign(S.settings, p.settings);
-    if (p.field) Object.assign(S.field, { preset: p.field.preset, count: p.field.count });
+    if (p.field) Object.assign(S.field, { preset: current ? p.field.preset : DEFAULT_PRESET, count: p.field.count });
     if (p.speed) S.speed = p.speed;
+    if (p.watch) for (const o of ['red', 'blue']) if (typeof p.watch[o] === 'string') S.watch.pick[o] = p.watch[o];
     if (p.mode) S.mode = p.mode;
-    if (p.bot) Object.assign(S.bot, { id: p.bot.id, side: p.bot.side === 'red' ? 'red' : 'blue', level: p.bot.level === 'easy' ? 'easy' : 'hard' });
+    if (p.bot) Object.assign(S.bot, { id: current ? p.bot.id : null, side: p.bot.side === 'red' ? 'red' : 'blue', level: p.bot.level === 'easy' ? 'easy' : 'hard' });
     if (p.bot && p.bot.limit) S.bot.limit = { maxGen: +p.bot.limit.maxGen || 2000, unlimited: !!p.bot.limit.unlimited };
   } catch { /* storage unavailable */ }
 }
@@ -60,8 +65,8 @@ function savePrefs() {
   const { settings, field } = S.mode !== 'duo' && S.duo ? S.duo : S;
   try {
     localStorage.setItem('lifeDuel.prefs', JSON.stringify({
-      settings, field: { preset: field.preset, count: field.count }, speed: S.speed,
-      mode: S.mode === 'online' ? 'duo' : S.mode, bot: { id: S.bot.id, side: S.bot.side, level: S.bot.level, limit: S.bot.limit },
+      v: PREFS_VERSION, settings, field: { preset: field.preset, count: field.count }, speed: S.speed,
+      mode: S.mode === 'online' ? 'duo' : S.mode, watch: S.watch.pick, bot: { id: S.bot.id, side: S.bot.side, level: S.bot.level, limit: S.bot.limit },
     }));
   } catch { /* storage unavailable */ }
 }
@@ -510,7 +515,8 @@ function updatePhaseLabel() {
     if (!b) return;
     const f = b.frame;
     if (f.finished) {
-      const who = S.mode === 'bot' && f.winner !== 'draw' ? (isBot(f.winner) ? ' (the bot)' : ' (you)')
+      const who = S.mode === 'watch' && f.winner !== 'draw' ? ` (${watchLabel(f.winner)})`
+        : S.mode === 'bot' && f.winner !== 'draw' ? (isBot(f.winner) ? ' (the bot)' : ' (you)')
         : S.mode === 'online' && f.winner !== 'draw' ? (isRemote(f.winner) ? ' (your friend)' : ' (you)') : '';
       el.innerHTML = f.winner === 'draw' ? 'Battle over — draw' : `Battle over — ${f.winner === 'red' ? R : B}${who} wins`;
     } else {
@@ -520,6 +526,10 @@ function updatePhaseLabel() {
   }
   if (S.mode === 'online') {
     el.innerHTML = onlinePhaseLabel();
+    return;
+  }
+  if (S.mode === 'watch') {
+    el.innerHTML = `Watch: pick the ${R} and ${B} armies (◀ ▶ cycles), then start the battle`;
     return;
   }
   if (S.mode === 'bot') {
@@ -638,6 +648,12 @@ function resetPreparation({ clearArmies }) {
     S.ready[S.bot.side] = true;
     S.open = humanSide();
     S.bot.army = pickBotArmy();
+  }
+  if (S.mode === 'watch') {
+    S.ready = { red: true, blue: true };
+    S.turn = 'done';
+    S.open = null;
+    watchFill(clearArmies);
   }
   if (S.mode === 'online') onlineResetPreparation();
   document.body.classList.remove('battle');
@@ -823,8 +839,8 @@ function updateScoreboard() {
     const board = prepBoard();
     red = blue = grey = 0;
     for (const v of board) { red += v === RED; blue += v === BLUE; grey += v === GREY; }
-    redSub = isHidden('red') ? '' : `${remaining('red')} pts left`;
-    blueSub = isHidden('blue') ? '' : `${remaining('blue')} pts left`;
+    redSub = isHidden('red') || S.mode === 'watch' ? '' : `${remaining('red')} pts left`;
+    blueSub = isHidden('blue') || S.mode === 'watch' ? '' : `${remaining('blue')} pts left`;
     $('#genLabel').textContent = 'Preparation';
     $('#genProgress').style.width = '0%';
     $('#genProgressBar').classList.remove('endless');
@@ -904,6 +920,7 @@ async function startBattle(encoded) {
       id: frame.id, frame, encoded: body, playing: true, turbo: false, acc: 0,
       pending: null, skipping: false, resultShown: false,
       live: { red: [], blue: [] }, rate: [], botArmy, mark: trainedMark(),
+      watch: S.mode === 'watch' ? { ...S.watch.shown } : null,
     };
     updateBotInfo();
     if (S.mode === 'online' && !encoded) onlineBattleStarted(body);
@@ -1164,6 +1181,11 @@ function showResult(frame) {
   const army = S.battle && S.battle.botArmy;
   $('#resultBot').hidden = !army;
   if (army) $('#resultBot').textContent = `The bot played ${botArmyText(army)}.`;
+  const watched = S.battle && S.battle.watch;
+  if (watched) {
+    $('#resultBot').hidden = false;
+    $('#resultBot').textContent = `Red: ${watched.red.long} · Blue: ${watched.blue.long}`;
+  }
   onlineDecorateResult(frame);
   $('#resultDialog').showModal();
   drawResultChart(frame.history, m && m.reached ? m.gen : 0);
@@ -1242,7 +1264,7 @@ function drawResultChart(history, markGen) {
 // ---------------------------------------------------------------------------
 function openSettings() {
   const s = S.settings;
-  const locked = S.mode === 'bot';
+  const locked = S.mode === 'bot' || S.mode === 'watch';
   const sizes = S.config.sizes.slice();
   if (!sizes.some(z => z.id === s.sizeId)) sizes.push({ id: s.sizeId, name: `${s.w} x ${s.h}` });
   $('#setSize').innerHTML = sizes.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
@@ -1252,7 +1274,7 @@ function openSettings() {
   $('#settingsLock').hidden = !locked;
   if (locked) {
     const t = S.bot.league.settings.maxGenerations;
-    $('#settingsLock').textContent = '🔒 vs Bot: only the generation limit can be changed; the rest is fixed to what the bot was trained with.' +
+    $('#settingsLock').textContent = '🔒 League battlefield: only the generation limit can be changed; the rest is fixed to what the bot was trained with.' +
       (t ? ` It was trained with a limit of ${fmt(t)} generations — beyond that it plays on, but was never judged there.` : '');
   }
   $('#setSize').value = s.sizeId;
@@ -1276,7 +1298,7 @@ function readLimit() {
 function applySettings() {
   if (S.mode === 'online' && !onlineMayEditSettings()) return;
   const s = S.settings;
-  if (S.mode === 'bot') {
+  if (S.mode === 'bot' || S.mode === 'watch') {
     S.bot.limit = readLimit();
     Object.assign(s, S.bot.limit);
     savePrefs();
@@ -1321,19 +1343,19 @@ function applySettings() {
 // unchanged. The bot draws its army before the human places anything and keeps
 // it hidden until the battle starts, exactly like a blind human opponent.
 // ---------------------------------------------------------------------------
-function isBot(owner) { return S.mode === 'bot' && owner === S.bot.side; }
+function isBot(owner) { return S.mode === 'watch' || (S.mode === 'bot' && owner === S.bot.side); }
 function humanSide() { return S.bot.side === 'red' ? 'blue' : 'red'; }
 
 // The generation limit the bot was trained with, when the player has chosen to
 // play on beyond it (a longer limit or none); null otherwise.
 function trainedMark() {
-  const t = S.mode === 'bot' && S.bot.league ? S.bot.league.settings.maxGenerations : 0;
+  const t = (S.mode === 'bot' || S.mode === 'watch') && S.bot.league ? S.bot.league.settings.maxGenerations : 0;
   return t && (S.settings.unlimited || S.settings.maxGen > t) ? { gen: t, reached: false } : null;
 }
 
 function markStanding(m) {
   const lead = m.red === m.blue ? null : m.red > m.blue ? 'red' : 'blue';
-  const verdict = !lead ? 'it would have been a draw' : isBot(lead) ? 'the bot would have won there' : 'you would have won there';
+  const verdict = !lead ? 'it would have been a draw' : S.mode === 'watch' ? `${cap(lead)} would have won there` : isBot(lead) ? 'the bot would have won there' : 'you would have won there';
   return `Red ${fmt(m.red)} vs Blue ${fmt(m.blue)} cells, ${verdict}`;
 }
 
@@ -1374,16 +1396,16 @@ function botPlacements(list, owner) {
   return list.map(p => {
     const pattern = S.arsenal.get(p.pattern);
     const shape = oriented(pattern, { rot: p.rot & 3, mirror: !!p.mirror });
-    return { id: 0, owner, patternId: pattern.id, cost: pattern.cost, x: p.x, y: p.y, w: shape.w, h: shape.h, cells: shape.cells };
+    return { id: 0, owner, patternId: pattern.id, cost: pattern.cost, x: p.x, y: p.y, w: shape.w, h: shape.h, cells: shape.cells, rot: shape.rot, mirror: shape.mirror };
   });
 }
 
 // The bot's army for the next battle. Hard follows the league's Nash mixture,
 // Easy picks any of its armies with equal chance. Nothing the human does
 // influences the draw.
-function pickBotArmy() {
+function pickBotArmy(level = S.bot.level) {
   const armies = S.bot.league ? S.bot.league.playable : [];
-  const weight = a => (S.bot.level === 'hard' ? Math.max(0, +a.weight || 0) : 1);
+  const weight = a => (level === 'hard' ? Math.max(0, +a.weight || 0) : 1);
   const candidates = armies.filter(a => weight(a) > 0);
   if (!candidates.length) return armies.length ? armies[Math.floor(Math.random() * armies.length)] : null;
   let r = Math.random() * candidates.reduce((sum, a) => sum + weight(a), 0);
@@ -1396,11 +1418,11 @@ function pickBotArmy() {
 
 function botArmyText(army) {
   const n = S.bot.league ? S.bot.league.armies.length : 0;
-  return `army #${army.id} of ${n} (${army.origin}, ${army.cost} pts, Nash weight ${Math.round(army.weight * 1000) / 10}%)`;
+  return `army #${army.id} of ${n} (ID ${leagueArmyId(army)}, ${army.origin}, ${army.cost} pts, Nash weight ${Math.round(army.weight * 1000) / 10}%)`;
 }
 
-// Switches to vs Bot mode with league `id` (the first one if unknown). Returns false if that is not possible.
-async function useBot(id) {
+// Switches to vs Bot (or Watch) mode with league `id` (the first one if unknown). Returns false if that is not possible.
+async function useBot(id, mode = 'bot') {
   const entry = S.bots.find(b => b.id === id) || S.bots[0];
   if (!entry) return false;
   let league;
@@ -1426,7 +1448,7 @@ async function useBot(id) {
     return false;
   }
 
-  if (S.mode !== 'bot') S.duo = { settings: { ...S.settings }, field: { ...S.field } };
+  if (S.mode === 'duo') S.duo = { settings: { ...S.settings }, field: { ...S.field } };
   const ls = league.settings;
   const size = S.config.sizes.find(z => z.width === ls.width && z.height === ls.height);
   Object.assign(S.settings, {
@@ -1435,9 +1457,10 @@ async function useBot(id) {
     variant: ls.variant === 'contagion' ? 'contagion' : 'birth', blind: false,
   });
   S.field = { preset: ls.preset, count: ls.count, seed: ls.fieldSeed };
-  S.mode = 'bot';
+  S.mode = mode;
   S.bot.id = entry.id;
   S.bot.league = league;
+  if (mode === 'watch' && !ARMY.published) loadPublished();
   await rebuildBoard();
   return true;
 }
@@ -1447,8 +1470,8 @@ async function setMode(mode) {
   const wasOnline = S.mode === 'online';
   if (wasOnline) onlineLeave();  // back to the two-player settings
   if (mode === 'online') return onlineStart();
-  if (mode === 'bot') {
-    if (!(await useBot(S.bot.id)) && wasOnline) await rebuildBoard();
+  if (mode === 'bot' || mode === 'watch') {
+    if (!(await useBot(S.bot.id, mode)) && wasOnline) await rebuildBoard();
     return;
   }
   if (S.duo) {
@@ -1493,40 +1516,189 @@ function setBotLevel(level) {
 }
 
 function updateModeUi() {
-  const bot = S.mode === 'bot';
+  const bot = S.mode === 'bot', watch = S.mode === 'watch';
   $('#modeSwitch').hidden = false;
   $('#modeSwitch [data-mode=bot]').hidden = !S.bots.length;
+  $('#modeSwitch [data-mode=watch]').hidden = !S.bots.length;
   for (const b of $$('#modeSwitch button')) b.classList.toggle('on', b.dataset.mode === S.mode);
-  for (const sel of ['#presetSelect', '#btnReroll', '#countRow', '#presetDesc']) $(sel).hidden = bot;
+  for (const sel of ['#presetSelect', '#btnReroll', '#countRow', '#presetDesc']) $(sel).hidden = bot || watch;
   $('#botPrep').hidden = !bot;
+  $('#watchPrep').hidden = !watch;
   for (const owner of ['red', 'blue']) {
     $(`.score.${owner} .label`).textContent = bot ? `${cap(owner)} · ${isBot(owner) ? 'bot' : 'you'}` : cap(owner);
   }
   updateOnlineUi();
-  if (!bot) return;
+  if (!bot && !watch) return;
   const s = S.settings;
   const preset = S.config.presets.find(p => p.id === S.field.preset);
-  $('#botField').textContent = `🔒 ${preset.name}${preset.usesCount ? ` · ${fmt(S.field.count)} grey` : ''} · seed ${S.field.seed}`;
-  $('#botField').title = `${s.w} x ${s.h} board, ${s.budget} points per player, ` +
+  for (const chip of [$('#botField'), $('#watchField')]) {
+    chip.textContent = `🔒 ${preset.name}${preset.usesCount ? ` · ${fmt(S.field.count)} grey` : ''} · seed ${S.field.seed}`;
+    chip.title = leagueFieldTitle(s);
+  }
+  for (const select of [$('#botSelect'), $('#watchLeague')]) {
+    select.hidden = S.bots.length < 2;
+    select.innerHTML = S.bots.map(b => `<option value="${b.id}">${b.id}</option>`).join('');
+    select.value = S.bot.id;
+  }
+  if (watch) {
+    // Room for the two army pickers: the league list names the battlefield already.
+    $('#watchField').hidden = S.bots.length > 1;
+    $('#watchLeague').title = $('#watchField').textContent + ' · ' + leagueFieldTitle(s);
+    return renderWatchPickers();
+  }
+  for (const b of $$('#botPrep [data-side]')) b.classList.toggle('on', b.dataset.side === humanSide());
+  for (const b of $$('#botPrep [data-level]')) b.classList.toggle('on', b.dataset.level === S.bot.level);
+}
+
+function leagueFieldTitle(s) {
+  return `${s.w} x ${s.h} board, ${s.budget} points per player, ` +
     `${s.unlimited ? 'no generation limit' : `limit ${fmt(s.maxGen)} generations`}` +
     `${S.bot.league.settings.maxGenerations ? ` (trained with ${fmt(S.bot.league.settings.maxGenerations)})` : ''}, ` +
     `${s.variant === 'contagion' ? 'Contagion' : 'Birthright'} rule. Only the generation limit can be changed (⚙).`;
-  const select = $('#botSelect');
-  select.hidden = S.bots.length < 2;
-  select.innerHTML = S.bots.map(b => `<option value="${b.id}">${b.id}</option>`).join('');
-  select.value = S.bot.id;
-  for (const b of $$('#botPrep [data-side]')) b.classList.toggle('on', b.dataset.side === humanSide());
-  for (const b of $$('#botPrep [data-level]')) b.classList.toggle('on', b.dataset.level === S.bot.level);
 }
 
 // During the battle the bot's army is no secret any more.
 function updateBotInfo() {
   const army = S.battle && S.battle.botArmy;
-  $('#botInfo').hidden = !army;
+  const watched = S.battle && S.battle.watch;
+  $('#botInfo').hidden = !army && !watched;
   if (army) {
     $('#botInfo').textContent = `Bot: army #${army.id} · ${army.origin}`;
     $('#botInfo').title = `The bot played ${botArmyText(army)}.`;
   }
+  if (watched) {
+    $('#botInfo').textContent = `${watched.red.short} vs ${watched.blue.short}`;
+    $('#botInfo').title = `Red: ${watched.red.long}\nBlue: ${watched.blue.long}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Watch: two armies fight on a league's battlefield, nobody places anything.
+// Each side is either drawn at random from the league (by Nash weight, or any
+// army with equal chance) or a chosen army: one of the league, a saved one or a
+// published one. ◀ ▶ step through all of them.
+// ---------------------------------------------------------------------------
+const leagueArmyId = a => armyId(toRedFrame(a.red, 'red', S.bot.league.settings.width), zones(S.bot.league.settings.width).zw, S.bot.league.settings.height);
+const pct = w => `${Math.round(w * 1000) / 10}%`;
+
+// Every army that can be picked: [{ key, group, label, long, placements(owner) }].
+function watchChoices() {
+  const league = S.bot.league;
+  if (!league) return [];
+  const bots = league.playable.slice().sort((a, b) => (b.weight || 0) - (a.weight || 0) || b.id - a.id);
+  const out = bots.map(a => ({
+    key: `bot:${a.id}`, group: 'League armies',
+    label: `#${a.id} · ${a.weight > 0 ? `${pct(a.weight)} Nash` : a.origin}`,
+    short: `#${a.id}`, long: botArmyText(a),
+    placements: owner => botPlacements(a[owner], owner),
+  }));
+  const fits = army => !armyFitProblem(army);
+  const add = (group, prefix, armies, extra) => {
+    for (const army of armies.filter(fits)) {
+      out.push({
+        key: `${prefix}:${army.id}`, group, label: `${army.name} · ${army.id.slice(0, 6)}`,
+        short: army.name, long: `"${army.name}" (ID ${army.id}${extra(army)}, ${army.cost} pts)`,
+        placements: owner => armyPlacements(army, owner), army,
+      });
+    }
+  };
+  add('My armies', 'mine', myArmies(), () => ', saved here');
+  add('Published', 'pub', ARMY.published || [], a => `, published by ${a.author}`);
+  return out;
+}
+
+const isRandomPick = pick => pick === 'nash' || pick === 'any';
+function watchLabel(owner) {
+  const shown = S.watch.shown[owner];
+  return shown ? shown.short : cap(owner);
+}
+
+// Puts the picked armies on the board; random picks are drawn again if `redraw`.
+function watchFill(redraw) {
+  const choices = watchChoices();
+  const byKey = new Map(choices.map(c => [c.key, c]));
+  for (const owner of ['red', 'blue']) {
+    let pick = S.watch.pick[owner];
+    if (!isRandomPick(pick) && !byKey.has(pick)) pick = S.watch.pick[owner] = 'nash';
+    let choice = byKey.get(pick);
+    if (isRandomPick(pick)) {
+      const kept = S.watch.shown[owner];
+      choice = !redraw && kept && kept.random === pick && byKey.get(kept.key);
+      if (!choice) {
+        const a = pickBotArmy(pick === 'nash' ? 'hard' : 'easy');
+        choice = a && byKey.get(`bot:${a.id}`);
+      }
+    }
+    S.watch.shown[owner] = choice ? { key: choice.key, short: choice.short, long: choice.long, random: isRandomPick(pick) ? pick : null } : null;
+  }
+  S.placements = [];
+  for (const owner of ['red', 'blue']) {
+    const choice = S.watch.shown[owner] && byKey.get(S.watch.shown[owner].key);
+    if (choice) S.placements.push(...choice.placements(owner).map(p => ({ ...p, id: S.nextId++ })));
+  }
+  renderWatchPickers(choices);
+  boardChanged();
+}
+
+function renderWatchPickers(choices = watchChoices()) {
+  for (const owner of ['red', 'blue']) {
+    const box = $(`#watchPrep .army-pick.${owner}`);
+    const select = $('select', box);
+    const groups = new Map();
+    for (const c of choices) {
+      if (!groups.has(c.group)) groups.set(c.group, []);
+      groups.get(c.group).push(c);
+    }
+    select.innerHTML = '';
+    for (const [value, label] of [['nash', '🎲 Random (Nash)'], ['any', '🎲 Random (any)']]) {
+      select.append(new Option(label, value));
+    }
+    for (const [group, list] of groups) {
+      const og = document.createElement('optgroup');
+      og.label = group;
+      for (const c of list) og.append(new Option(c.label, c.key));
+      select.append(og);
+    }
+    select.value = S.watch.pick[owner];
+    const shown = S.watch.shown[owner];
+    const drawn = $('.drawn', box);
+    drawn.hidden = !(shown && shown.random);
+    if (shown) drawn.textContent = `→ ${shown.short}`;
+    select.title = shown ? shown.long : '';
+    $('[data-act=keep]', box).disabled = !shown || shown.key.startsWith('mine:');
+  }
+}
+
+function watchPick(owner, pick) {
+  S.watch.pick[owner] = pick;
+  savePrefs();
+  watchFill(true);
+}
+
+// ◀ ▶: the previous / next army after the one on the board.
+function watchStep(owner, dir) {
+  const choices = watchChoices();
+  if (!choices.length) return;
+  const shown = S.watch.shown[owner];
+  const i = shown ? choices.findIndex(c => c.key === shown.key) : -1;
+  const next = choices[(i + dir + choices.length) % choices.length];
+  watchPick(owner, next.key);
+}
+
+// 💾: keep the army on the board in this browser.
+function watchKeep(owner) {
+  const army = sideArmy(owner);
+  if (!army) return;
+  const shown = S.watch.shown[owner];
+  const name = cleanName(prompt('Save this army as:', shown && shown.key.startsWith('bot:') ? `${S.bot.id} ${shown.short}` : (shown ? shown.short : '')));
+  if (!name) return;
+  if (saveArmy({ ...army, name })) toast(`Saved "${name}" (${army.id}).`);
+  onArmiesChanged();
+}
+
+// armies.js: the saved or published armies have changed.
+function onArmiesChanged() {
+  if (S.mode === 'watch' && S.phase === 'prep') renderWatchPickers();
 }
 
 // ---------------------------------------------------------------------------
@@ -1572,7 +1744,7 @@ function armIdle() {
 function newGame() {
   if (S.mode === 'online') return onlineNewGame();
   if (S.battle) S.battle = null;
-  if (S.mode !== 'bot' && ['random', 'random_mirror', 'random_rotational', 'reactor'].includes(S.field.preset)) {
+  if (S.mode !== 'bot' && S.mode !== 'watch' && ['random', 'random_mirror', 'random_rotational', 'reactor'].includes(S.field.preset)) {
     S.field.seed = newSeed();
     loadBattlefield();
   }
@@ -1634,7 +1806,20 @@ function wire() {
   for (const btn of $$('#botPrep [data-side]')) btn.addEventListener('click', () => setBotSide(btn.dataset.side));
   for (const btn of $$('#botPrep [data-level]')) btn.addEventListener('click', () => setBotLevel(btn.dataset.level));
   $('#botSelect').addEventListener('change', e => useBot(e.target.value));
+  $('#watchLeague').addEventListener('change', e => useBot(e.target.value, 'watch'));
+  for (const owner of ['red', 'blue']) {
+    const box = $(`#watchPrep .army-pick.${owner}`);
+    $('select', box).addEventListener('change', e => watchPick(owner, e.target.value));
+    box.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      if (btn.dataset.step) watchStep(owner, +btn.dataset.step);
+      if (btn.dataset.act === 'dice') watchPick(owner, isRandomPick(S.watch.pick[owner]) ? S.watch.pick[owner] : 'nash');
+      if (btn.dataset.act === 'keep') watchKeep(owner);
+    });
+  }
   wireOnline();
+  wireArmies();
 
   new ResizeObserver(() => {
     resize();
@@ -1697,13 +1882,13 @@ async function init() {
   buildCards();
   wire();
   initSpeedDial();
-  const startInBotMode = S.mode === 'bot' && S.bots.length > 0;
+  const startMode = (S.mode === 'bot' || S.mode === 'watch') && S.bots.length > 0 ? S.mode : null;
   S.mode = 'duo';
   updateModeUi();
   syncFieldControls();
   resize();
   resetPreparation({ clearArmies: true });
-  if (!startInBotMode || !(await useBot(S.bot.id))) await loadBattlefield();
+  if (!startMode || !(await useBot(S.bot.id, startMode))) await loadBattlefield();
   requestAnimationFrame(tick);
   onlineJoinFromLink();
 

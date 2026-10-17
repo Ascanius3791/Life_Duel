@@ -43,9 +43,11 @@ configure with `-DGOL_NATIVE=OFF`.
 ### Playing against the bot
 
 Click **vs Bot** at the top left of Life Duel. The bot is a league trained by
-`life_arena` (see below); the one in `assets/leagues/` was trained on the Medium
-board with *Random (mirrored)*, 900 grey cells, seed 1, 120 points, a 2000
-generation limit and the Birthright rule.
+`life_arena` (see below). The leagues in `assets/leagues/` were trained on the
+Medium board with 120 points, a 2000 generation limit and the Birthright rule,
+one per battlefield: *Hive lattice* (the default, also the default battlefield
+for two players), *No man's land* (`open`) and *Random (mirrored)* with 900 grey
+cells, seed 1 (`mirror900`).
 
 - Pick your side (**You play Red / Blue**). The bot plays the other one.
 - The battlefield and all settings are locked to the ones the bot was trained
@@ -71,6 +73,40 @@ league of your own, pass it instead, as often as you like:
 
 The league file is re-read for every game, so you can play against a league
 while it is still being trained.
+
+### Watching bots
+
+Click **Watch** to see two armies of a league fight on its battlefield (the
+Hive league by default; the list next to the pickers switches leagues). Each
+side is **🎲 Random (Nash)** — drawn from the league's Nash mixture, the
+default — **🎲 Random (any)**, or one particular army: the list holds every
+army of the league (Nash support first), your saved armies and the published
+ones. **◀ ▶** step through them, 🎲 draws again, 💾 keeps the army on the board
+in your saved armies. **New game** draws the random sides again.
+
+### Saved and published armies
+
+Each arsenal has **Save** and **Load**. Saved armies have a name and stay in
+this browser (`localStorage`). **Armies** (top right) lists them: load one for
+a side, rename, delete, copy its *army code* (one line, `LD1|52x128|name|...`,
+to pass on by hand; paste one into the import field) or **Publish** it.
+
+Every army has an **ID**: the first 12 hex digits of the SHA-256 of its living
+cells in the zone (stored as Red would place it; Blue gets the mirror image).
+Equal boards have equal IDs, however they were built — saved, published and
+league armies alike (the bot's army is named with its ID after a battle).
+
+**Publishing** goes through GitHub issues, so it needs no server: *Publish*
+opens a pre-filled issue in the repository (`ARMY_REPO` in
+`battle/web/armies.js`, default `Ascanius3791/Life_Duel`); the player clicks
+*Create* (a GitHub account is needed for that, not for browsing). Every open
+issue that contains a valid army code is a published army, listed for every
+player under **Armies → Published** (read with the public GitHub API, cached
+for 3 minutes; GitHub allows 60 requests per hour per visitor without login).
+If the same army is published twice, the first issue counts. Closing an issue
+unpublishes the army. **The repository must be public** for this; a private
+code repository can point `ARMY_REPO` (or `window.LIFE_DUEL_ARMY_REPO`) at a
+separate public one.
 
 ### Play online
 
@@ -266,6 +302,7 @@ battle/     life_battle: HTTP server + JSON API (api_json.* is shared with the W
   wasm_engine.cpp  the engine for the static site (Emscripten target life_duel_engine)
   web/        index.html, style.css, app.js (no build step; PeerJS is loaded from a CDN for online play)
     online.js         online play: PeerJS connection, commit-reveal, checksums, rematch
+    armies.js         saved armies (names, IDs, army codes) and publishing through GitHub issues
     static-backend.js, engine-worker.js   the /api/ calls answered in the browser (static site only)
 tools/      build_site.sh: WebAssembly build + static site in dist/
 .github/workflows/pages.yml   CI: native build + tests, static site, GitHub Pages deploy

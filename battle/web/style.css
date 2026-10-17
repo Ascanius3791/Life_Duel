@@ -415,3 +415,43 @@ dialog h3 { margin: 0; }
   .score .sub, .score .spark { display: none !important; }
   .topbar { padding: 8px 12px; }
 }
+
+/* ---------- Saved armies ---------- */
+.head-actions { display: flex; align-items: center; gap: 4px; }
+.head-actions .small { padding: 3px 9px; font-size: 12px; }
+.armies-head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; flex-wrap: wrap; }
+.armies-head h2 { margin: 0; margin-right: auto; }
+.army-list { display: grid; gap: 6px; max-height: min(56vh, 520px); overflow-y: auto; margin-top: 10px; padding-right: 4px; }
+.army-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); }
+.army-row:hover { border-color: var(--border-2); }
+.army-thumb { width: 39px; height: 96px; image-rendering: pixelated; border-radius: 3px; border: 1px solid var(--border); flex: none; }
+.army-info { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.army-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.army-meta { color: var(--muted); font-size: 12px; }
+.army-meta.bad, .army-empty.bad { color: var(--red); }
+.army-id { font-size: 12px; color: var(--accent); background: rgba(255, 209, 102, .08); padding: 0 5px; border-radius: 5px; user-select: all; }
+.army-chip { font-size: 11px; font-weight: 600; color: #8de0b0; background: rgba(80, 200, 140, .12); padding: 0 6px; border-radius: 6px; }
+.army-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.army-actions .load.red { border-color: rgba(255, 77, 109, .6); color: var(--red); background: var(--red-soft); }
+.army-actions .load.blue { border-color: rgba(63, 167, 255, .6); color: var(--blue); background: var(--blue-soft); }
+.army-actions .icon-del { color: var(--muted); }
+.army-link { color: var(--muted); font-size: 12px; padding: 0 6px; }
+.army-empty { padding: 18px 6px; text-align: center; }
+.import-row { display: flex; gap: 8px; margin-top: 12px; }
+input[type=text] { background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 8px; padding: 6px 8px; color: var(--text); user-select: text; }
+.import-row input { flex: 1; min-width: 0; font-size: 12px; }
+
+/* Watch: an army picker per side */
+.watch-prep { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.army-pick { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border: 1px solid var(--border-2); border-radius: 10px; background: var(--bg-2); }
+.army-pick.red { border-color: rgba(255, 77, 109, .45); }
+.army-pick.blue { border-color: rgba(63, 167, 255, .45); }
+.army-pick .seg-label { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding: 0 4px; }
+.army-pick.red .seg-label { color: var(--red); }
+.army-pick.blue .seg-label { color: var(--blue); }
+.army-pick .icon { width: 28px; height: 28px; font-size: 13px; background: transparent; border-color: transparent; }
+.army-pick select { width: 160px; padding: 4px 6px; }
+#watchLeague { width: auto; max-width: 160px; min-width: 0; }
+.watch-prep { gap: 8px; }
+.watch-prep ~ .start { flex: none; }
+.army-pick .drawn { white-space: nowrap; padding-right: 4px; }

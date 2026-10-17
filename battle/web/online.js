@@ -445,7 +445,7 @@ function startRematch() {
 // Hooks called by app.js
 // ---------------------------------------------------------------------------
 function stashDuoSettings() {
-  if (S.mode === 'bot' && S.duo) {
+  if ((S.mode === 'bot' || S.mode === 'watch') && S.duo) {
     Object.assign(S.settings, S.duo.settings);
     S.field = { ...S.duo.field };
   } else if (S.mode === 'duo') {
