@@ -13,6 +13,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Tune for the building machine (AVX2/AVX-512, POPCNT). Makes the battle engine
+# used for bot training several times faster, but the binaries may not run on
+# older CPUs. Turn off for portable builds: -DGOL_NATIVE=OFF.
+option(GOL_NATIVE "Optimise for the CPU of the building machine (-march=native)" ON)
+if(GOL_NATIVE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-march=native GOL_HAS_MARCH_NATIVE)
+  if(GOL_HAS_MARCH_NATIVE)
+    add_compile_options(-march=native)
+  endif()
+endif()
+
 # --- Shared simulation core -------------------------------------------------
 add_library(gol_core
   core/src/life.cpp

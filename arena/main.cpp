@@ -17,9 +17,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 using namespace arena;
@@ -34,6 +36,7 @@ double secondsSince(Clock::time_point t) { return std::chrono::duration<double>(
 struct Options {
     std::string command;
     std::string league = "league.txt";
+    bool leagueGiven = false;
     Settings settings;
     bool settingsGiven = false;
     int iterations = 20;
@@ -82,7 +85,9 @@ void usage() {
         "\n"
         "Other:\n"
         "  --board            match: print the starting board in the browser's run-length format\n"
-        "  --battles N        bench: number of battles (default 20)");
+        "  --battles N        bench: number of battles (default 20); with --league the battles are\n"
+        "                     played between the league's armies (their settings), otherwise\n"
+        "                     between random armies");
 }
 
 bool parseArgs(int argc, char** argv, Options& o) {
@@ -99,7 +104,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
         };
         auto integer = [&]() { return std::atoi(value().c_str()); };
         Settings& s = o.settings;
-        if (a == "--league") o.league = value();
+        if (a == "--league") o.league = value(), o.leagueGiven = true;
         else if (a == "--size") {
             const std::string v = value();
             if (std::sscanf(v.c_str(), "%dx%d", &s.width, &s.height) != 2 || s.width < 20 || s.height < 10) {
@@ -175,13 +180,25 @@ std::vector<Army> parseArmies(const Arena& arena, const std::vector<std::pair<st
 }
 
 // Extends the payoff matrix to all armies; entries already computed are kept.
-void extendPayoff(const Arena& arena, const std::vector<Army>& armies, Matrix& m, int threads) {
+// `known` (optional) supplies payoff(armies[i], armies[j]) for pairs that were
+// already played elsewhere; it returns false for pairs that must be played.
+using KnownPayoff = std::function<bool(int i, int j, double& v)>;
+void extendPayoff(const Arena& arena, const std::vector<Army>& armies, Matrix& m, int threads,
+                  const KnownPayoff& known = nullptr) {
     const std::size_t n = armies.size(), old = m.size();
     m.resize(n);
     for (auto& row : m) row.resize(n, 0);
     std::vector<std::pair<int, int>> jobs;
     for (std::size_t i = old; i < n; ++i)
-        for (std::size_t j = 0; j < i; ++j) jobs.emplace_back(static_cast<int>(i), static_cast<int>(j));
+        for (std::size_t j = 0; j < i; ++j) {
+            double v;
+            if (known && known(static_cast<int>(i), static_cast<int>(j), v)) {
+                m[i][j] = v;
+                m[j][i] = -v;
+            } else {
+                jobs.emplace_back(static_cast<int>(i), static_cast<int>(j));
+            }
+        }
     parallelFor(static_cast<int>(jobs.size()), threads, [&](int k) {
         const auto [i, j] = jobs[k];
         const double v = arena.payoff(armies[i], armies[j]);
@@ -267,6 +284,15 @@ int train(const Options& o) {
     std::vector<double> meta = solveNash(m);
     save(o, arena, armies, meta, m);
 
+    // Armies are identified by content so that no battle is played twice:
+    // league members take their scores from the payoff matrix, and an army that
+    // shows up again during a search (a support army in the starting population,
+    // a child equal to an earlier one) reuses its scores. The values are the
+    // same as replaying the battles, because battles are deterministic and
+    // payoff(a, b) == -payoff(b, a) exactly.
+    std::unordered_map<std::string, int> leagueIndex;
+    for (std::size_t i = 0; i < armies.size(); ++i) leagueIndex.emplace(armyKey(arena, armies[i]), static_cast<int>(i));
+
     for (int iter = 1; iter <= o.iterations; ++iter) {
         const auto start = Clock::now();
         meta = solveNash(m);
@@ -300,20 +326,37 @@ int train(const Options& o) {
             pop.push_back({std::move(a)});
         }
 
+        // Scores against the support of every army seen in this iteration.
+        std::unordered_map<std::string, std::vector<double>> seen;
         for (int gen = 0; gen < o.generations; ++gen) {
             // Evaluate everything new against every opponent, all in parallel.
             std::vector<int> todo;
             for (std::size_t k = 0; k < pop.size(); ++k)
                 if (!pop[k].evaluated) todo.push_back(static_cast<int>(k));
-            std::vector<double> scores(todo.size() * support.size());
-            parallelFor(static_cast<int>(scores.size()), o.threads, [&](int job) {
-                const int k = todo[job / support.size()];
-                const int s = support[job % support.size()];
-                scores[job] = arena.payoff(pop[k].army, armies[s]);
+            std::vector<std::vector<double>*> rows(todo.size());
+            std::vector<std::vector<double>*> fresh;  // armies that still have to play
+            std::vector<const Army*> freshArmy;
+            for (std::size_t t = 0; t < todo.size(); ++t) {
+                const Army& army = pop[todo[t]].army;
+                const std::string key = armyKey(arena, army);
+                auto [it, inserted] = seen.emplace(key, std::vector<double>(support.size()));
+                rows[t] = &it->second;  // stays valid: unordered_map nodes do not move
+                if (!inserted) continue;
+                const auto member = leagueIndex.find(key);
+                if (member != leagueIndex.end()) {
+                    for (std::size_t s = 0; s < support.size(); ++s) it->second[s] = m[member->second][support[s]];
+                } else {
+                    fresh.push_back(&it->second);
+                    freshArmy.push_back(&army);
+                }
+            }
+            parallelFor(static_cast<int>(fresh.size() * support.size()), o.threads, [&](int job) {
+                const std::size_t f = job / support.size(), s = job % support.size();
+                (*fresh[f])[s] = arena.payoff(*freshArmy[f], armies[support[s]]);
             });
             for (std::size_t t = 0; t < todo.size(); ++t) {
                 double f = 0;
-                for (std::size_t s = 0; s < support.size(); ++s) f += weight[s] * scores[t * support.size() + s];
+                for (std::size_t s = 0; s < support.size(); ++s) f += weight[s] * (*rows[t])[s];
                 pop[todo[t]].fitness = f;
                 pop[todo[t]].evaluated = true;
             }
@@ -358,7 +401,17 @@ int train(const Options& o) {
             for (const auto& a : armies) found += a.origin.rfind("found", 0) == 0;
             added.origin = "found " + std::to_string(found);
             armies.push_back(std::move(added));
-            extendPayoff(arena, armies, m, o.threads);
+            const std::string key = armyKey(arena, armies.back());
+            leagueIndex.emplace(key, static_cast<int>(armies.size()) - 1);
+            // Its battles against the support were played during the search.
+            const std::vector<double>& played = seen.at(key);
+            extendPayoff(arena, armies, m, o.threads, [&](int i, int j, double& v) {
+                if (i != static_cast<int>(armies.size()) - 1) return false;
+                const auto s = std::find(support.begin(), support.end(), j);
+                if (s == support.end()) return false;
+                v = played[s - support.begin()];
+                return true;
+            });
             // The search only saw the strongest members; this is the score against the whole mixture.
             const double full = expected(m, static_cast<int>(armies.size()) - 1, meta);
             meta = solveNash(m);
@@ -456,11 +509,28 @@ int match(const Options& o) {
 }
 
 int bench(const Options& o) {
-    const Arena arena(o.settings);
+    // Battles between league armies (as in training) or between random armies.
+    Settings settings = o.settings;
+    std::vector<std::pair<std::string, std::string>> raw;
+    if (o.leagueGiven && !loadLeague(o, settings, raw, false)) return 1;
+    const Arena arena(settings);
     Rng rng(o.rng);
     std::vector<std::vector<std::uint8_t>> boards;
-    for (int i = 0; i < o.battles; ++i) boards.push_back(arena.board(arena.randomArmy(rng), arena.randomArmy(rng)));
-    const gol::BattleConfig cfg{o.settings.width, o.settings.height, o.settings.variant, o.settings.maxGenerations};
+    const auto armies = parseArmies(arena, raw);
+    if (o.leagueGiven && armies.size() < 2) {
+        std::fprintf(stderr, "bench needs a league with at least two armies\n");
+        return 1;
+    }
+    for (int i = 0; i < o.battles; ++i) {
+        if (armies.empty()) {
+            boards.push_back(arena.board(arena.randomArmy(rng), arena.randomArmy(rng)));
+        } else {
+            const std::size_t n = armies.size(), a = static_cast<std::size_t>(i) % n;
+            const std::size_t b = (a + 1 + static_cast<std::size_t>(i) / n % (n - 1)) % n;
+            boards.push_back(arena.board(armies[a], armies[b]));
+        }
+    }
+    const gol::BattleConfig cfg{settings.width, settings.height, settings.variant, settings.maxGenerations};
 
     struct Outcome {
         int generation;
@@ -492,11 +562,22 @@ int bench(const Options& o) {
     int differ = 0;
     for (std::size_t i = 0; i < boards.size(); ++i) differ += reference[i] != fastOutcomes[i];
 
-    std::printf("%d battles on %dx%d, %lld generations in total\n", o.battles, o.settings.width, o.settings.height,
-                gens);
-    std::printf("  reference engine:    %7.1f ms/battle  %8.0f gen/s\n", 1000 * slow / o.battles, slowGens / slow);
-    std::printf("  bit-parallel engine: %7.1f ms/battle  %8.0f gen/s  (%.1fx faster)\n", 1000 * fast / o.battles,
+    // Throughput on all threads, as in training (each battle several times
+    // so that every thread has enough work).
+    const int rounds = std::max(1, (16 * o.threads + o.battles - 1) / o.battles);
+    t = Clock::now();
+    parallelFor(o.battles * rounds, o.threads, [&](int i) {
+        gol::FastBattle battle(cfg, boards[static_cast<std::size_t>(i % o.battles)]);
+        battle.runToEnd();
+    });
+    const double parallel = secondsSince(t);
+
+    std::printf("%d battles (%s) on %dx%d, %lld generations in total\n", o.battles,
+                armies.empty() ? "random armies" : "league armies", settings.width, settings.height, gens);
+    std::printf("  reference engine:    %7.2f ms/battle  %8.0f gen/s\n", 1000 * slow / o.battles, slowGens / slow);
+    std::printf("  bit-parallel engine: %7.2f ms/battle  %8.0f gen/s  (%.1fx faster)\n", 1000 * fast / o.battles,
                 gens / fast, slow / fast);
+    std::printf("  bit-parallel, %d threads: %.0f battles/s\n", o.threads, o.battles * rounds / parallel);
     if (differ) std::printf("  WARNING: the engines disagree on %d battles\n", differ);
     return differ ? 1 : 0;
 }

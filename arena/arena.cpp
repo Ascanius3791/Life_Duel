@@ -260,6 +260,19 @@ std::string formatPieces(const Arena& arena, const Army& army) {
     return out;
 }
 
+std::string armyKey(const Arena& arena, const Army& army) {
+    std::vector<std::string> tokens;
+    for (const auto& p : army.pieces) {
+        Army one;
+        one.pieces.push_back(p);
+        tokens.push_back(formatPieces(arena, one));
+    }
+    std::sort(tokens.begin(), tokens.end());
+    std::string key;
+    for (const auto& t : tokens) key += t + ';';
+    return key;
+}
+
 bool parsePieces(const Arena& arena, const std::string& text, Army& army) {
     army.pieces.clear();
     std::stringstream ss(text);
