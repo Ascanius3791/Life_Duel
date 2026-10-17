@@ -45,7 +45,11 @@ generation limit and the Birthright rule.
 
 - Pick your side (**You play Red / Blue**). The bot plays the other one.
 - The battlefield and all settings are locked to the ones the bot was trained
-  for, because its armies are only good there.
+  for, because its armies are only good there. The one exception is the
+  **generation limit** (Settings): set a longer one, or none, to see how a
+  battle really ends. The progress bar then marks the limit the bot was trained
+  with, a message shows the standings when the battle passes it, and the result
+  dialog says who would have won there.
 - The bot draws its army when the preparation starts, before you place
   anything, and it stays hidden until the battle begins. **Hard** draws from the
   league's Nash mixture, **Easy** picks any army of the league with equal chance
