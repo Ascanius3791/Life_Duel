@@ -107,12 +107,14 @@ std::string battlefieldJson(const std::string& preset, int width, int height, in
            gol::encodeBoard(board) + "\"}";
 }
 
-gol::BattleConfig battleConfig(int width, int height, int maxGenerations, const std::string& variant) {
+gol::BattleConfig battleConfig(int width, int height, int maxGenerations, const std::string& variant,
+                               bool ignoreHome) {
     gol::BattleConfig cfg;
     cfg.width = width;
     cfg.height = height;
     cfg.maxGenerations = maxGenerations;
     cfg.variant = variant == "contagion" ? gol::Variant::Contagion : gol::Variant::BirthOnly;
+    cfg.ignoreHome = ignoreHome;
     return cfg;
 }
 
@@ -140,6 +142,7 @@ std::string frameJson(const std::string& id, const gol::Battle& b, bool includeB
       << ",\"finished\":" << (b.finished() ? "true" : "false") << ",\"winner\":\"" << gol::toString(b.winner())
       << "\",\"reason\":\"" << gol::toString(b.endReason()) << "\",\"period\":" << b.period()
       << ",\"redScore\":" << b.redScore() << ",\"blueScore\":" << b.blueScore();
+    if (b.config().ignoreHome) o << ",\"redHome\":" << b.redHome() << ",\"blueHome\":" << b.blueHome();
     if (includeBoard) o << ",\"board\":\"" << gol::encodeBoard(b.cells()) << '"';
     if (b.finished()) {
         const std::size_t n = b.redHistory().size();
@@ -150,9 +153,9 @@ std::string frameJson(const std::string& id, const gol::Battle& b, bool includeB
         o << ",\"history\":{\"gen\":[";
         for (std::size_t i = 0; i < gens.size(); ++i) o << (i ? "," : "") << gens[i];
         o << "],";
-        appendHistory(o, "red", gens, b.redHistory());
+        appendHistory(o, "red", gens, b.redScoreHistory());
         o << ',';
-        appendHistory(o, "blue", gens, b.blueHistory());
+        appendHistory(o, "blue", gens, b.blueScoreHistory());
         o << ',';
         appendHistory(o, "grey", gens, b.greyHistory());
         o << '}';

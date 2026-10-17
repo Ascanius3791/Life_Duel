@@ -55,7 +55,7 @@
       case 'battlefield':
         return call('battlefield', q.get('preset') || 'random_mirror', num('w', 260), num('h', 128), num('count', 800), num('seed', 1));
       case 'battle':
-        return call('battle', num('w', 260), num('h', 128), num('maxgen', 2000), q.get('variant') || '', String(options.body || ''));
+        return call('battle', num('w', 260), num('h', 128), num('maxgen', 2000), q.get('variant') || '', num('home', 1), String(options.body || ''));
       case 'step':
         return call('step', q.get('id') || '', num('n', 1), q.has('ms') ? Math.max(1, num('ms', 20)) : 0, q.get('board') !== '0');
       case 'bots':

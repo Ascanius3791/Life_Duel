@@ -61,6 +61,9 @@ private:
         return static_cast<std::size_t>(k + 1) * stride_ + static_cast<std::size_t>(y + 1);
     }
     void markAllChanged();
+    // Cells of `plane` with x in [x0, x1), over all rows.
+    int countColumns(const std::vector<std::uint64_t>& plane, int x0, int x1) const;
+    void countHome();
     void checkEnd();
     // Full hash of the current board; step() keeps hash_ up to date incrementally.
     std::uint64_t hash() const;
@@ -87,10 +90,12 @@ private:
 
     int generation_ = 0;
     int red_ = 0, blue_ = 0, grey_ = 0;
+    int redHome_ = 0, blueHome_ = 0;  // only with config_.ignoreHome
     Winner winner_ = Winner::None;
     EndReason reason_ = EndReason::None;
     int period_ = 0;
     double redScore_ = 0, blueScore_ = 0;
+    // Counted cells per generation (see BattleConfig::ignoreHome).
     std::vector<int> redHistory_, blueHistory_;
     std::unordered_map<std::uint64_t, int> seen_;
     std::deque<std::uint64_t> seenOrder_;

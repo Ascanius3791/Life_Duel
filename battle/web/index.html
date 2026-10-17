@@ -285,6 +285,9 @@
         </div>
         <small class="muted">With no limit the battle only ends when an army is wiped out or the board repeats itself.</small>
       </div>
+      <label class="choice"><input type="checkbox" name="ignoreHome" id="setIgnoreHome">
+        <span><b>Home cells don't count</b> — cells inside their own starting area are left out when the cells are counted
+          (generation limit, repeating board). An army that is wiped out still loses.</span></label>
       <fieldset class="field">
         <legend>Colour rule</legend>
         <label class="choice"><input type="radio" name="variant" value="birth">
@@ -331,8 +334,9 @@
         <h3>Winning</h3>
         <ul>
           <li>Wipe out every cell of the opponent's colour.</li>
-          <li>Otherwise, when the generation limit is reached, more cells wins. The limit can also be set to <b>∞</b>.</li>
-          <li>If the whole board repeats a previous state, the game ends early and the average number of cells over one cycle decides.</li>
+          <li>If the whole board repeats a previous state, the game ends and the average number of cells over one cycle decides.</li>
+          <li>By default there is no generation limit (<b>∞</b>). With a limit (⚙), more cells wins when it is reached.</li>
+          <li>By default <b>home cells don't count</b>: cells inside their own starting area are left out of these counts (⚙).</li>
         </ul>
       </section>
       <section>

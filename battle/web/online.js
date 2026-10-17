@@ -318,7 +318,7 @@ function onMessage(m) {
 function currentSetup() {
   const s = S.settings;
   return {
-    settings: { sizeId: s.sizeId, w: s.w, h: s.h, budget: s.budget, maxGen: s.maxGen, unlimited: s.unlimited, variant: s.variant },
+    settings: { sizeId: s.sizeId, w: s.w, h: s.h, budget: s.budget, maxGen: s.maxGen, unlimited: s.unlimited, ignoreHome: !!s.ignoreHome, variant: s.variant },
     field: { preset: S.field.preset, count: S.field.count, seed: S.field.seed },
   };
 }
@@ -358,7 +358,7 @@ function applySetup(m) {
   const size = S.config.sizes.find(z => z.width === st.w && z.height === st.h);
   Object.assign(S.settings, {
     sizeId: size ? size.id : 'online', w: st.w, h: st.h, budget: st.budget, maxGen: Math.max(10, st.maxGen),
-    unlimited: !!st.unlimited, variant: st.variant === 'contagion' ? 'contagion' : 'birth', blind: false,
+    unlimited: !!st.unlimited, ignoreHome: !!st.ignoreHome, variant: st.variant === 'contagion' ? 'contagion' : 'birth', blind: false,
   });
   S.field = { preset: f.preset, count: f.count, seed: f.seed };
   NET.setupKey = JSON.stringify(currentSetup());

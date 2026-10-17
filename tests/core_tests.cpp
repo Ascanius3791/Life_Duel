@@ -187,6 +187,27 @@ static void testBattle() {
         b.advance(100000);
         CHECK(b.finished() && b.endReason() == EndReason::Repetition && b.generation() > 50);
     }
+    // Home cells do not count: two red blocks in red's own area (8 cells) vs one
+    // blue block in the middle (4 cells). The frozen board is red's with all
+    // cells counted, blue's with ignoreHome. A red army that only stays at home
+    // still wins by elimination.
+    {
+        auto cells = board(50, 20, {{2, 2, Red}, {3, 2, Red}, {2, 3, Red}, {3, 3, Red},
+                                    {2, 8, Red}, {3, 8, Red}, {2, 9, Red}, {3, 9, Red},
+                                    {25, 5, Blue}, {26, 5, Blue}, {25, 6, Blue}, {26, 6, Blue}});
+        BattleConfig c5{50, 20, Variant::BirthOnly, 100};
+        Battle all(c5, cells);
+        all.runToEnd();
+        CHECK(all.endReason() == EndReason::Repetition && all.winner() == Winner::Red);
+        c5.ignoreHome = true;
+        Battle away(c5, cells);
+        CHECK(away.redHome() == 8 && away.blueHome() == 0 && away.redScore() == 0 && away.blueScore() == 4);
+        away.runToEnd();
+        CHECK(away.endReason() == EndReason::Repetition && away.winner() == Winner::Blue);
+        CHECK(away.redScoreHistory().back() == 0 && away.redHistory().back() == 8);
+        Battle alone(c5, board(50, 20, {{2, 2, Red}, {3, 2, Red}, {2, 3, Red}, {3, 3, Red}}));
+        CHECK(alone.finished() && alone.endReason() == EndReason::Elimination && alone.winner() == Winner::Red);
+    }
 
     // Board encoding round trip.
     {
@@ -234,6 +255,7 @@ static bool sameAsReference(const BattleConfig& cfg, const std::vector<std::uint
     while (true) {
         if (fast.cells() != slow.cells() || fast.redCount() != slow.redCount() ||
             fast.blueCount() != slow.blueCount() || fast.greyCount() != slow.greyCount() ||
+            fast.redScore() != slow.redScore() || fast.blueScore() != slow.blueScore() ||
             fast.finished() != slow.finished() || fast.generation() != slow.generation()) {
             std::printf("  fast engine differs (%s): %dx%d variant=%d gen=%d\n", what, cfg.width, cfg.height,
                         static_cast<int>(cfg.variant), slow.generation());
@@ -266,10 +288,11 @@ static void testFastBattle() {
         for (auto& c : cells) c = pct(rng) < density ? static_cast<std::uint8_t>(colour(rng)) : std::uint8_t{Dead};
         return cells;
     };
-    for (const int w : {1, 5, 63, 64, 65, 130, 200})
+    for (const int w : {1, 5, 63, 64, 65, 130, 200, 330, 340})
         for (const Variant v : {Variant::BirthOnly, Variant::Contagion})
             for (const int density : {15, 40})
-                mismatches += !sameAsReference({w, 37, v, 400}, soup(w, 37, density), "soup");
+                for (const bool ignoreHome : {false, true})
+                    mismatches += !sameAsReference({w, 37, v, 400, ignoreHome}, soup(w, 37, density), "soup");
     for (const int h : {1, 2, 3, 4, 5, 8, 9, 300})
         for (const Variant v : {Variant::BirthOnly, Variant::Contagion})
             mismatches += !sameAsReference({70, h, v, 300}, soup(70, h, 30), "height");
@@ -278,7 +301,8 @@ static void testFastBattle() {
     // lifes or oscillators of various periods (pulsars: 3, pentadecathlons: 15),
     // so the skipping of unchanged tiles and the repetition check are exercised.
     for (const auto& preset : battlefieldPresets())
-        for (const Variant v : {Variant::BirthOnly, Variant::Contagion}) {
+        for (const Variant v : {Variant::BirthOnly, Variant::Contagion})
+            for (const bool ignoreHome : {false, true}) {
             const int w = 160, h = 96;
             auto cells = makeBattlefield(preset.id, w, h, 400, 11);
             const Zones z = zonesFor(w);
@@ -287,7 +311,7 @@ static void testFastBattle() {
                     const bool left = x < z.leftEnd, right = x >= z.rightStart;
                     if ((left || right) && pct(rng) < 12) cells[static_cast<std::size_t>(y) * w + x] = left ? Red : Blue;
                 }
-            mismatches += !sameAsReference({w, h, v, 1500}, cells, preset.id.c_str());
+            mismatches += !sameAsReference({w, h, v, 1500, ignoreHome}, cells, preset.id.c_str());
         }
     CHECK(mismatches == 0);
 }

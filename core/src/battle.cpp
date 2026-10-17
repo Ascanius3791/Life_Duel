@@ -113,12 +113,22 @@ void Battle::count() {
         blue_ += c == Blue;
         grey_ += c == Grey;
     }
+    redHome_ = blueHome_ = 0;
+    if (!config_.ignoreHome) return;
+    const Zones z = zonesFor(config_.width);
+    for (int y = 0; y < config_.height; ++y) {
+        const std::uint8_t* row = &cells_[static_cast<std::size_t>(y) * config_.width];
+        for (int x = 0; x < z.leftEnd; ++x) redHome_ += row[x] == Red;
+        for (int x = z.rightStart; x < config_.width; ++x) blueHome_ += row[x] == Blue;
+    }
 }
 
 void Battle::record() {
     redHistory_.push_back(red_);
     blueHistory_.push_back(blue_);
     greyHistory_.push_back(grey_);
+    redCounted_.push_back(red_ - redHome_);
+    blueCounted_.push_back(blue_ - blueHome_);
 }
 
 void Battle::checkEnd() {
@@ -129,13 +139,14 @@ void Battle::checkEnd() {
         else winner_ = Winner::Draw;
     };
 
-    redScore_ = red_;
-    blueScore_ = blue_;
+    redScore_ = red_ - redHome_;
+    blueScore_ = blue_ - blueHome_;
 
     // A colour can never come back once it is gone: births need a neighbour of
-    // that colour to win the vote.
+    // that colour to win the vote. The survivor wins, wherever its cells are.
     if (red_ == 0 || blue_ == 0) {
-        decideByScore(EndReason::Elimination);
+        reason_ = EndReason::Elimination;
+        winner_ = red_ > 0 ? Winner::Red : blue_ > 0 ? Winner::Blue : Winner::Draw;
         return;
     }
 
@@ -155,8 +166,8 @@ void Battle::checkEnd() {
         period_ = generation_ - first;
         double redSum = 0, blueSum = 0;
         for (int g = first; g < generation_; ++g) {
-            redSum += redHistory_[g];
-            blueSum += blueHistory_[g];
+            redSum += redCounted_[g];
+            blueSum += blueCounted_[g];
         }
         redScore_ = redSum / period_;
         blueScore_ = blueSum / period_;

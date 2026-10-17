@@ -239,9 +239,28 @@ FastBattle::FastBattle(const BattleConfig& config, const std::vector<std::uint8_
     }
     grey_ = alive - red_ - blue_;
     hash_ = hash();
-    redHistory_.push_back(red_);
-    blueHistory_.push_back(blue_);
+    countHome();
+    redHistory_.push_back(red_ - redHome_);
+    blueHistory_.push_back(blue_ - blueHome_);
     checkEnd();
+}
+
+int FastBattle::countColumns(const std::vector<std::uint64_t>& plane, int x0, int x1) const {
+    int n = 0;
+    for (int k = x0 / 64; k * 64 < x1; ++k) {
+        const int lo = std::max(x0 - k * 64, 0), hi = std::min(x1 - k * 64, 64);
+        const std::uint64_t mask = (hi == 64 ? ~0ull : (1ull << hi) - 1) & ~((1ull << lo) - 1);
+        const std::uint64_t* column = &plane[index(k, 0)];
+        for (int y = 0; y < config_.height; ++y) n += popcount(column[y] & mask);
+    }
+    return n;
+}
+
+void FastBattle::countHome() {
+    if (!config_.ignoreHome) return;
+    const Zones z = zonesFor(config_.width);
+    redHome_ = countColumns(red_bits_, 0, z.leftEnd);
+    blueHome_ = countColumns(blue_bits_, z.rightStart, config_.width);
 }
 
 void FastBattle::markAllChanged() {
@@ -406,8 +425,9 @@ void FastBattle::step() {
     prevHash_ = hash_;
     hash_ = nextHash;
 
-    redHistory_.push_back(red_);
-    blueHistory_.push_back(blue_);
+    countHome();
+    redHistory_.push_back(red_ - redHome_);
+    blueHistory_.push_back(blue_ - blueHome_);
     checkEnd();
 }
 
@@ -433,11 +453,12 @@ void FastBattle::checkEnd() {
         else winner_ = Winner::Draw;
     };
 
-    redScore_ = red_;
-    blueScore_ = blue_;
+    redScore_ = red_ - redHome_;
+    blueScore_ = blue_ - blueHome_;
 
     if (red_ == 0 || blue_ == 0) {
-        decideByScore(EndReason::Elimination);
+        reason_ = EndReason::Elimination;
+        winner_ = red_ > 0 ? Winner::Red : blue_ > 0 ? Winner::Blue : Winner::Draw;
         return;
     }
 

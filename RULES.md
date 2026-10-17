@@ -119,11 +119,22 @@ The battle ends as soon as one of these happens:
    that colour to win the vote.
 2. **Repetition**: the entire board is exactly the same as in an earlier
    generation. From then on the game would loop forever. The **average**
-   number of red and blue cells over one full cycle decides, so oscillators
-   are judged fairly. A frozen board is a cycle of length 1.
-3. **Generation limit** (default 2000): the colour with more living cells wins.
-   Equal counts are a draw. The limit can be set to **∞** in Settings. The
-   battle then runs until one army is wiped out or the board repeats.
+   number of counted red and blue cells over one full cycle decides, so
+   oscillators are judged fairly. A frozen board is a cycle of length 1.
+3. **Generation limit**: the colour with more counted cells wins. Equal
+   counts are a draw. By default there is **no limit (∞)**: the battle runs
+   until one army is wiped out or the board repeats. A limit (for example
+   2000 generations) can be set in Settings.
+
+**Home cells don't count** (on by default, can be switched off in Settings):
+red cells inside Red's own starting area and blue cells inside Blue's are
+left out of the counts for rules 2 and 3. Only cells that have left home, or
+were born outside it, score. Cells inside the *opponent's* area do count.
+Elimination (rule 1) still looks at every cell: an army that is wiped out
+loses, even if the winner's cells all stayed at home.
+
+The bots were trained with all cells counted and a limit of 2000
+generations. In vs Bot and Watch mode both settings can still be changed.
 
 > Rules are perfectly symmetric. Two mirror-image armies on a symmetric
 > battlefield therefore always end in a draw. You have to be different to win!

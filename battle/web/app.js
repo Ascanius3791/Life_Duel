@@ -14,12 +14,12 @@ const RGB = { [RED]: [255, 77, 109], [BLUE]: [63, 167, 255], [GREY]: [141, 150, 
 const SPEED_MIN = 1, SPEED_MAX = 1000;
 const SNAP_DISTANCE = 12;  // cells beyond the own zone in which a dragged pattern still snaps into it
 const DEFAULT_PRESET = 'hive_lattice';
-const PREFS_VERSION = 2;  // 2: the Hive lattice became the default battlefield
+const PREFS_VERSION = 3;  // 2: the Hive lattice became the default battlefield; 3: no generation limit and home cells not counted by default
 
 const S = {
   config: null,
   arsenal: new Map(),
-  settings: { sizeId: 'medium', w: 260, h: 128, budget: 120, maxGen: 2000, unlimited: false, variant: 'birth', blind: true },
+  settings: { sizeId: 'medium', w: 260, h: 128, budget: 120, maxGen: 2000, unlimited: true, ignoreHome: true, variant: 'birth', blind: true },
   field: { preset: DEFAULT_PRESET, count: 900, seed: newSeed() },
   grey: null,
   placements: [],
@@ -37,7 +37,8 @@ const S = {
   dirty: true,
   mode: 'duo',          // 'duo': two players at one screen | 'bot': one player against a trained bot | 'watch': two armies of a league | 'online': see online.js
   bots: [],             // leagues the server offers: [{ id }]
-  bot: { id: null, league: null, side: 'blue', level: 'hard', army: null, limit: null },
+  // limit: what vs Bot and Watch may change of the league's rules (generation limit, home cells).
+  bot: { id: null, league: null, side: 'blue', level: 'hard', army: null, limit: { unlimited: true, ignoreHome: true } },
   watch: { pick: { red: 'nash', blue: 'nash' }, shown: { red: null, blue: null } },
   duo: null,            // the two-player settings, kept aside while vs Bot or online mode replaces them
 };
@@ -50,14 +51,16 @@ function newSeed() { return Math.floor(Math.random() * 1e9); }
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem('lifeDuel.prefs') || '{}');
-    const current = p.v === PREFS_VERSION;  // older prefs: keep everything but the battlefield and the bot
-    if (p.settings) Object.assign(S.settings, p.settings);
+    const current = p.v === PREFS_VERSION;  // older prefs: keep everything but the battlefield, the bot and the end rules
+    if (p.settings) Object.assign(S.settings, p.settings, current ? {} : { unlimited: true, ignoreHome: true });
     if (p.field) Object.assign(S.field, { preset: current ? p.field.preset : DEFAULT_PRESET, count: p.field.count });
     if (p.speed) S.speed = p.speed;
     if (p.watch) for (const o of ['red', 'blue']) if (typeof p.watch[o] === 'string') S.watch.pick[o] = p.watch[o];
     if (p.mode) S.mode = p.mode;
     if (p.bot) Object.assign(S.bot, { id: current ? p.bot.id : null, side: p.bot.side === 'red' ? 'red' : 'blue', level: p.bot.level === 'easy' ? 'easy' : 'hard' });
-    if (p.bot && p.bot.limit) S.bot.limit = { maxGen: +p.bot.limit.maxGen || 2000, unlimited: !!p.bot.limit.unlimited };
+    if (current && p.bot && p.bot.limit) {
+      S.bot.limit = { maxGen: +p.bot.limit.maxGen || 2000, unlimited: !!p.bot.limit.unlimited, ignoreHome: p.bot.limit.ignoreHome !== false };
+    }
   } catch { /* storage unavailable */ }
 }
 function savePrefs() {
@@ -822,12 +825,21 @@ function setCount(value) {
 // ---------------------------------------------------------------------------
 function fmt(n) { return Math.round(n).toLocaleString('en-US'); }
 
+// The cells of a frame that count for the score: all of them, or with
+// "home cells don't count" those outside the colour's own starting area.
+function counted(f) {
+  return { red: f.red - (f.redHome || 0), blue: f.blue - (f.blueHome || 0) };
+}
+
 function updateScoreboard() {
   let red, blue, grey, redSub, blueSub;
   if (S.phase === 'battle' && S.battle) {
     const f = S.battle.frame;
-    ({ red, blue, grey } = f);
-    redSub = blueSub = '';
+    ({ red, blue } = counted(f));
+    grey = f.grey;
+    const home = n => (n == null ? '' : `+${fmt(n)} at home, not counted`);
+    redSub = home(f.redHome);
+    blueSub = home(f.blueHome);
     const m = S.battle.mark;
     $('#genLabel').textContent = `Generation ${fmt(f.gen)} / ${f.maxGen ? fmt(f.maxGen) : '∞'}` +
       (m ? ` (bot trained to ${fmt(m.gen)})` : '');
@@ -845,7 +857,8 @@ function updateScoreboard() {
     $('#genProgress').style.width = '0%';
     $('#genProgressBar').classList.remove('endless');
     $('#genMark').hidden = true;
-    $('#rateLabel').textContent = S.settings.unlimited ? 'no generation limit' : `limit ${fmt(S.settings.maxGen)} gens`;
+    $('#rateLabel').textContent = (S.settings.unlimited ? 'no generation limit' : `limit ${fmt(S.settings.maxGen)} gens`) +
+      (S.settings.ignoreHome ? ' · home cells don\'t count' : '');
   }
   const showRed = !isHidden('red'), showBlue = !isHidden('blue');
   $('#scoreRed').textContent = showRed ? fmt(red) : '?';
@@ -903,13 +916,13 @@ function sample(arr, n) {
 // Battle
 // ---------------------------------------------------------------------------
 async function startBattle(encoded) {
-  const { w, h, maxGen, unlimited, variant } = S.settings;
+  const { w, h, maxGen, unlimited, variant, ignoreHome } = S.settings;
   const botArmy = S.mode === 'bot' ? S.bot.army : null;
   if (S.mode === 'bot' && !botArmy) return toast('The bot has no army to play.');
   const extra = botArmy ? botPlacements(botArmy[S.bot.side], S.bot.side) : S.mode === 'online' ? onlineOpponentPlacements() : [];
   const body = encoded || encodeBoard(prepBoard(extra));
   try {
-    const frame = await api(`/api/battle?w=${w}&h=${h}&maxgen=${unlimited ? 0 : maxGen}&variant=${variant}`, { method: 'POST', body });
+    const frame = await api(`/api/battle?w=${w}&h=${h}&maxgen=${unlimited ? 0 : maxGen}&variant=${variant}&home=${ignoreHome ? 0 : 1}`, { method: 'POST', body });
     S.drag = null;
     S.phase = 'battle';
     S.turn = 'done';
@@ -936,7 +949,7 @@ function applyFrame(frame) {
   const b = S.battle;
   b.frame = frame;
   if (b.mark && !b.mark.reached && frame.gen === b.mark.gen) {
-    Object.assign(b.mark, { reached: true, red: frame.red, blue: frame.blue });
+    Object.assign(b.mark, { reached: true, ...counted(frame) });
     if (!frame.finished && !b.skipping) toast(`Generation ${fmt(b.mark.gen)}: the bot was trained up to here — ${markStanding(b.mark)}. Playing on.`);
   }
   if (frame.board) paintBoard(decodeBoard(frame.board, S.settings.w * S.settings.h));
@@ -946,8 +959,9 @@ function applyFrame(frame) {
     b.live.red = frame.history.red.map((v, i) => [frame.history.gen[i], v]);
     b.live.blue = frame.history.blue.map((v, i) => [frame.history.gen[i], v]);
   } else if (!last || last[0] !== frame.gen) {
-    b.live.red.push([frame.gen, frame.red]);
-    b.live.blue.push([frame.gen, frame.blue]);
+    const c = counted(frame);
+    b.live.red.push([frame.gen, c.red]);
+    b.live.blue.push([frame.gen, c.blue]);
   }
   const now = performance.now();
   b.rate.push([now, frame.gen]);
@@ -1046,10 +1060,11 @@ async function skipToEnd() {
     while (!frame.finished && S.battle === b && !b.stopSkip) {
       frame = await api(`/api/step?id=${b.id}&${capAtMark(b, 'ms=150', 400)}&board=0`);
       b.frame = frame;
-      if (b.mark && !b.mark.reached && frame.gen === b.mark.gen) Object.assign(b.mark, { reached: true, red: frame.red, blue: frame.blue });
+      if (b.mark && !b.mark.reached && frame.gen === b.mark.gen) Object.assign(b.mark, { reached: true, ...counted(frame) });
       $('#skipProgress').style.width = frame.maxGen ? `${(frame.gen / frame.maxGen) * 100}%` : '100%';
       const of = frame.maxGen ? ` of ${fmt(frame.maxGen)}` : ' (no limit)';
-      $('#skipText').textContent = `Generation ${fmt(frame.gen)}${of} · Red ${fmt(frame.red)} · Blue ${fmt(frame.blue)}`;
+      const c = counted(frame);
+      $('#skipText').textContent = `Generation ${fmt(frame.gen)}${of} · Red ${fmt(c.red)} · Blue ${fmt(c.blue)}`;
     }
     if (S.battle === b) {
       b.skipping = false;
@@ -1162,17 +1177,19 @@ function showResult(frame) {
     : S.mode === 'bot' ? (isBot(frame.winner) ? 'The bot wins' : 'You win!') : `${cap(frame.winner)} wins!`;
   const loser = frame.winner === 'red' ? 'Blue' : 'Red';
   let reason = '';
+  const c = counted(frame);
+  const cells = frame.redHome != null ? 'cells outside their own area' : 'cells';
   if (frame.reason === 'elimination') {
     reason = frame.winner === 'draw'
       ? `Both armies were wiped out at generation ${fmt(frame.gen)}.`
       : `${loser} was wiped out at generation ${fmt(frame.gen)}.`;
   } else if (frame.reason === 'generation_limit') {
-    reason = `Generation limit of ${fmt(frame.maxGen)} reached — Red ${fmt(frame.red)} vs Blue ${fmt(frame.blue)} cells.`;
+    reason = `Generation limit of ${fmt(frame.maxGen)} reached — Red ${fmt(c.red)} vs Blue ${fmt(c.blue)} ${cells}.`;
   } else if (frame.reason === 'repetition') {
     const avg = n => (Math.round(n * 10) / 10).toLocaleString('en-US');
     reason = frame.period === 1
-      ? `The board froze at generation ${fmt(frame.gen)} — Red ${fmt(frame.red)} vs Blue ${fmt(frame.blue)} cells.`
-      : `The board started repeating every ${frame.period} generations (at ${fmt(frame.gen)}). Average over the cycle: Red ${avg(frame.redScore)} vs Blue ${avg(frame.blueScore)}.`;
+      ? `The board froze at generation ${fmt(frame.gen)} — Red ${fmt(c.red)} vs Blue ${fmt(c.blue)} ${cells}.`
+      : `The board started repeating every ${frame.period} generations (at ${fmt(frame.gen)}). Average over the cycle: Red ${avg(frame.redScore)} vs Blue ${avg(frame.blueScore)} ${cells}.`;
   }
   $('#resultReason').textContent = reason;
   const m = S.battle && S.battle.mark;
@@ -1268,20 +1285,23 @@ function openSettings() {
   const sizes = S.config.sizes.slice();
   if (!sizes.some(z => z.id === s.sizeId)) sizes.push({ id: s.sizeId, name: `${s.w} x ${s.h}` });
   $('#setSize').innerHTML = sizes.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
-  // vs Bot: the league fixes everything but the generation limit.
+  // vs Bot: the league fixes everything but the generation limit and the home cell rule.
   for (const el of $$('#settingsForm input, #settingsForm select')) el.disabled = locked;
   $('#setUnlimited').disabled = false;
+  $('#setIgnoreHome').disabled = false;
   $('#settingsLock').hidden = !locked;
   if (locked) {
     const t = S.bot.league.settings.maxGenerations;
-    $('#settingsLock').textContent = '🔒 League battlefield: only the generation limit can be changed; the rest is fixed to what the bot was trained with.' +
-      (t ? ` It was trained with a limit of ${fmt(t)} generations — beyond that it plays on, but was never judged there.` : '');
+    $('#settingsLock').textContent = '🔒 League battlefield: only the generation limit and whether home cells count can be changed; the rest is fixed to what the bot was trained with.' +
+      (t ? ` It was trained with a limit of ${fmt(t)} generations — beyond that it plays on, but was never judged there.` : '') +
+      (S.bot.league.settings.ignoreHome ? '' : ' It was trained with all cells counted.');
   }
   $('#setSize').value = s.sizeId;
   $('#setBudget').value = s.budget;
   $('#setMaxGen').value = s.maxGen;
   $('#setUnlimited').checked = s.unlimited;
   $('#setMaxGen').disabled = s.unlimited;
+  $('#setIgnoreHome').checked = !!s.ignoreHome;
   $('#setBlind').checked = s.blind;
   for (const r of $$('input[name=variant]')) r.checked = r.value === s.variant;
   onlineSettingsForm();
@@ -1292,6 +1312,7 @@ function readLimit() {
   return {
     maxGen: Math.max(10, Math.min(10000000, Math.round(+$('#setMaxGen').value || 2000))),
     unlimited: $('#setUnlimited').checked,
+    ignoreHome: $('#setIgnoreHome').checked,
   };
 }
 
@@ -1453,7 +1474,7 @@ async function useBot(id, mode = 'bot') {
   const size = S.config.sizes.find(z => z.width === ls.width && z.height === ls.height);
   Object.assign(S.settings, {
     sizeId: size ? size.id : 'league', w: ls.width, h: ls.height, budget: ls.budget,
-    maxGen: ls.maxGenerations || S.settings.maxGen, unlimited: ls.maxGenerations === 0, ...S.bot.limit,
+    maxGen: ls.maxGenerations || S.settings.maxGen, unlimited: ls.maxGenerations === 0, ignoreHome: !!ls.ignoreHome, ...S.bot.limit,
     variant: ls.variant === 'contagion' ? 'contagion' : 'birth', blind: false,
   });
   S.field = { preset: ls.preset, count: ls.count, seed: ls.fieldSeed };
@@ -1554,7 +1575,8 @@ function leagueFieldTitle(s) {
   return `${s.w} x ${s.h} board, ${s.budget} points per player, ` +
     `${s.unlimited ? 'no generation limit' : `limit ${fmt(s.maxGen)} generations`}` +
     `${S.bot.league.settings.maxGenerations ? ` (trained with ${fmt(S.bot.league.settings.maxGenerations)})` : ''}, ` +
-    `${s.variant === 'contagion' ? 'Contagion' : 'Birthright'} rule. Only the generation limit can be changed (⚙).`;
+    `${s.variant === 'contagion' ? 'Contagion' : 'Birthright'} rule${s.ignoreHome ? ', home cells don\'t count' : ''}. ` +
+    'Only the generation limit and the home cell rule can be changed (⚙).';
 }
 
 // During the battle the bot's army is no secret any more.

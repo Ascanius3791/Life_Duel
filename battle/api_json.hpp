@@ -19,11 +19,15 @@ std::string configJson();
 // GET /api/battlefield: the grey cells of a preset, run-length encoded.
 std::string battlefieldJson(const std::string& preset, int width, int height, int count, std::uint64_t seed);
 
-// The settings of POST /api/battle. maxGenerations 0 means no limit.
-gol::BattleConfig battleConfig(int width, int height, int maxGenerations, const std::string& variant);
+// The settings of POST /api/battle. maxGenerations 0 means no limit; with
+// ignoreHome, cells in their own starting area do not count for the score.
+gol::BattleConfig battleConfig(int width, int height, int maxGenerations, const std::string& variant,
+                               bool ignoreHome);
 
-// A battle's state as /api/battle and /api/step return it. The final frame
-// also carries the (sampled) red/blue/grey history.
+// A battle's state as /api/battle and /api/step return it. With ignoreHome it
+// also has the cells each colour has in its own area (redHome, blueHome). The
+// final frame also carries the (sampled) red/blue/grey history; red and blue
+// there are the counted cells.
 std::string frameJson(const std::string& id, const gol::Battle& battle, bool includeBoard);
 
 }  // namespace duel

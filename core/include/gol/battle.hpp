@@ -37,6 +37,10 @@ struct BattleConfig {
     Variant variant = Variant::BirthOnly;
     // 0 = no limit: the battle only ends by elimination or repetition.
     int maxGenerations = 2000;
+    // Cells inside their own starting area (red in the left zone, blue in the
+    // right one) do not count for the score that decides a generation limit or
+    // a repetition. Elimination still looks at every cell.
+    bool ignoreHome = false;
 };
 
 // Number of recent boards a battle remembers to detect repetition. Any cycle
@@ -76,6 +80,9 @@ public:
     int redCount() const { return red_; }
     int blueCount() const { return blue_; }
     int greyCount() const { return grey_; }
+    // Cells in their own starting area (only counted with config().ignoreHome, else 0).
+    int redHome() const { return redHome_; }
+    int blueHome() const { return blueHome_; }
 
     bool finished() const { return winner_ != Winner::None; }
     bool unlimited() const { return config_.maxGenerations == 0; }
@@ -83,7 +90,8 @@ public:
     EndReason endReason() const { return reason_; }
     // Length of the detected cycle (1 = still life) when reason is Repetition.
     int period() const { return period_; }
-    // Final score used to decide the winner (cell counts, or the average over the cycle).
+    // Score used to decide the winner: the counted cells (all of them, or
+    // those outside the own area with ignoreHome), or their average over the cycle.
     double redScore() const { return redScore_; }
     double blueScore() const { return blueScore_; }
 
@@ -91,6 +99,9 @@ public:
     const std::vector<int>& redHistory() const { return redHistory_; }
     const std::vector<int>& blueHistory() const { return blueHistory_; }
     const std::vector<int>& greyHistory() const { return greyHistory_; }
+    // Counted cells per generation (equal to the cell counts without ignoreHome).
+    const std::vector<int>& redScoreHistory() const { return redCounted_; }
+    const std::vector<int>& blueScoreHistory() const { return blueCounted_; }
 
 private:
     void count();
@@ -103,11 +114,13 @@ private:
     std::vector<std::uint8_t> next_;
     int generation_ = 0;
     int red_ = 0, blue_ = 0, grey_ = 0;
+    int redHome_ = 0, blueHome_ = 0;
     Winner winner_ = Winner::None;
     EndReason reason_ = EndReason::None;
     int period_ = 0;
     double redScore_ = 0, blueScore_ = 0;
     std::vector<int> redHistory_, blueHistory_, greyHistory_;
+    std::vector<int> redCounted_, blueCounted_;
     // Hashes of the last kRepetitionWindow boards (hash -> generation).
     std::unordered_map<std::uint64_t, int> seen_;
     std::deque<std::uint64_t> seenOrder_;

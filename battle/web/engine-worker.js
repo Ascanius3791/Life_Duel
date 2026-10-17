@@ -28,7 +28,7 @@ const ready = createLifeDuelEngine({ locateFile: file => `engine/${file}` }).the
   return {
     config: () => call(m._engine_config, []),
     battlefield: (preset, w, h, count, seed) => call(m._engine_battlefield, [preset, w, h, count, seed]),
-    battle: (w, h, maxgen, variant, board) => call(m._engine_battle, [w, h, maxgen, variant, board]),
+    battle: (w, h, maxgen, variant, home, board) => call(m._engine_battle, [w, h, maxgen, variant, home, board]),
     step: (id, n, ms, board) => call(m._engine_step, [id, n, ms, board ? 1 : 0]),
   };
 });

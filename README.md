@@ -51,11 +51,13 @@ cells, seed 1 (`mirror900`).
 
 - Pick your side (**You play Red / Blue**). The bot plays the other one.
 - The battlefield and all settings are locked to the ones the bot was trained
-  for, because its armies are only good there. The one exception is the
-  **generation limit** (Settings): set a longer one, or none, to see how a
-  battle really ends. The progress bar then marks the limit the bot was trained
-  with, a message shows the standings when the battle passes it, and the result
-  dialog says who would have won there.
+  for, because its armies are only good there. The exceptions are the
+  **generation limit** and **home cells don't count** (Settings). Like
+  everywhere else, the battle runs without a limit by default, so you see how it
+  really ends. The progress bar then marks the limit the bot was trained with
+  (2000), a message shows the standings when the battle passes it, and the
+  result dialog says who would have won there. The bots were trained with all
+  cells counted.
 - The bot draws its army when the preparation starts, before you place
   anything, and it stays hidden until the battle begins. **Hard** draws from the
   league's Nash mixture, **Easy** picks any army of the league with equal chance
@@ -317,7 +319,7 @@ assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mo
 |---|---|
 | `GET /api/config` | arsenal (patterns + costs), battlefield presets, board sizes |
 | `GET /api/battlefield?w&h&preset&count&seed` | generated grey battlefield |
-| `POST /api/battle?w&h&maxgen&variant` (body = board) | start a battle, returns the first frame (`maxgen=0`: no limit) |
+| `POST /api/battle?w&h&maxgen&variant&home` (body = board) | start a battle, returns the first frame (`maxgen=0`: no limit; `home=0`: cells in their own starting area don't count, the frames then also carry `redHome`/`blueHome`) |
 | `GET /api/step?id&n=K` or `&ms=T` | advance K generations, or as many as fit into T ms; `board=0` omits the board |
 | `GET /api/bots` | the bot leagues on offer: `{"bots":[{"id"}]}` |
 | `GET /api/bot?id` | that league's JSON export, verbatim (settings, armies with Nash weights and red/blue placements) |
