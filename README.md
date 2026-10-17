@@ -324,3 +324,8 @@ assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mo
 
 Boards are sent as run-length text: `.` dead, `r` red, `b` blue, `g` grey, each
 optionally prefixed with a repeat count (`12.3r.g`).
+
+## License
+
+MIT, see [LICENSE](LICENSE). The DejaVu fonts in `assets/` keep their own free
+licence (Bitstream Vera / DejaVu).
