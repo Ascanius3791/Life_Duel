@@ -27,6 +27,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <functional>
 #include <map>
 #include <sstream>
@@ -118,6 +119,9 @@ void usage() {
         "  --log-matches P    train: record every battle in P.armies.tsv and P.matches.csv (appends)\n"
         "  life_arena raster --league FILE --log-matches P\n"
         "                     write the logged armies' red-zone bitmaps to P.raster.bin (+ P.raster.json)\n"
+        "  life_arena oracle --league FILE\n"
+        "                     answer requests on stdin (random / mutated armies, their bitmaps,\n"
+        "                     real scores against league armies) for an outside search\n"
         "\n"
         "Other:\n"
         "  --board            match: print the starting board in the browser's run-length format\n"
@@ -630,6 +634,28 @@ int show(const Options& o) {
     return 0;
 }
 
+// The red zone of `army`, zone width x height cells row by row, packed 8 cells
+// per byte, most significant bit first (the format of P.raster.bin).
+void packArmy(const Arena& arena, const Army& army, std::vector<std::uint8_t>& packed) {
+    const int w = arena.settings().width, h = arena.settings().height, zw = arena.zones().leftEnd;
+    packed.assign((static_cast<std::size_t>(zw) * h + 7) / 8, 0);
+    const auto cells = arena.board(army, Army{});
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < zw; ++x)
+            if (cells[static_cast<std::size_t>(y) * w + x] == gol::Red) {
+                const std::size_t k = static_cast<std::size_t>(y) * zw + x;
+                packed[k / 8] |= static_cast<std::uint8_t>(0x80 >> (k % 8));
+            }
+}
+
+std::string hexOf(const std::vector<std::uint8_t>& bytes) {
+    static const char* digits = "0123456789abcdef";
+    std::string out;
+    out.reserve(bytes.size() * 2);
+    for (auto b : bytes) out += digits[b >> 4], out += digits[b & 15];
+    return out;
+}
+
 // Cell bitmaps of the logged armies for model training: P.raster.bin holds,
 // for every army of P.armies.tsv in id order, its red zone (zone width x height
 // cells, row by row) packed 8 cells per byte, most significant bit first.
@@ -669,14 +695,7 @@ int raster(const Options& o) {
             std::fclose(f);
             return 1;
         }
-        const auto cells = arena.board(army, Army{});
-        std::fill(packed.begin(), packed.end(), 0);
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < zw; ++x)
-                if (cells[static_cast<std::size_t>(y) * w + x] == gol::Red) {
-                    const std::size_t k = static_cast<std::size_t>(y) * zw + x;
-                    packed[k / 8] |= static_cast<std::uint8_t>(0x80 >> (k % 8));
-                }
+        packArmy(arena, army, packed);
         std::fwrite(packed.data(), 1, bytes, f);
         ++added;
     }
@@ -692,6 +711,69 @@ int raster(const Options& o) {
         std::fclose(meta);
     }
     std::printf("%s: %zu armies (%zu new), %d x %d cells each\n", out.c_str(), done + added, added, zw, h);
+    return 0;
+}
+
+// Line protocol for programs that steer a search from outside (e.g. a learnt
+// predictor, tools/surrogate/climb.py). Fields are separated by tabs; every
+// answer ends with a line "end". PIECES is the league file's army text.
+//   league                  one line per league army: index, pieces, bitmap (hex, as P.raster.bin)
+//   random N SEED           N random legal armies: pieces, bitmap
+//   mutate N SEED PIECES    N mutations of the army: pieces, bitmap
+//   score IDS PIECES        one line: the army's score against each league army in IDS
+//                           (comma separated), played for real on all threads
+int oracle(const Options& o) {
+    Settings settings;
+    std::vector<std::pair<std::string, std::string>> raw;
+    if (!loadLeague(o, settings, raw, false)) return 1;
+    const Arena arena(settings);
+    const auto armies = parseArmies(arena, raw);
+    std::vector<std::uint8_t> packed;
+    auto emit = [&](const Army& a) {
+        packArmy(arena, a, packed);
+        std::printf("%s\t%s\n", formatPieces(arena, a).c_str(), hexOf(packed).c_str());
+    };
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        std::vector<std::string> f;
+        for (std::size_t start = 0;;) {
+            const auto tab = line.find('\t', start);
+            f.push_back(line.substr(start, tab == std::string::npos ? std::string::npos : tab - start));
+            if (tab == std::string::npos) break;
+            start = tab + 1;
+        }
+        Army army;
+        if (f[0] == "league") {
+            for (std::size_t i = 0; i < armies.size(); ++i) {
+                std::printf("%zu\t", i);
+                emit(armies[i]);
+            }
+        } else if (f[0] == "random" && f.size() == 3) {
+            Rng rng(std::strtoull(f[2].c_str(), nullptr, 10));
+            for (int i = std::atoi(f[1].c_str()); i > 0; --i) emit(arena.randomArmy(rng));
+        } else if (f[0] == "mutate" && f.size() == 4 && parsePieces(arena, f[3], army)) {
+            Rng rng(std::strtoull(f[2].c_str(), nullptr, 10));
+            for (int i = std::atoi(f[1].c_str()); i > 0; --i) emit(arena.mutate(army, rng));
+        } else if (f[0] == "score" && f.size() == 3 && parsePieces(arena, f[2], army) && arena.legal(army)) {
+            std::vector<int> ids;
+            for (std::size_t start = 0; start < f[1].size();) {
+                auto comma = f[1].find(',', start);
+                if (comma == std::string::npos) comma = f[1].size();
+                const int id = std::atoi(f[1].substr(start, comma - start).c_str());
+                if (id >= 0 && id < static_cast<int>(armies.size())) ids.push_back(id);
+                start = comma + 1;
+            }
+            std::vector<double> scores(ids.size());
+            parallelFor(static_cast<int>(ids.size()), o.threads,
+                        [&](int i) { scores[i] = arena.payoff(army, armies[ids[i]]); });
+            for (std::size_t i = 0; i < scores.size(); ++i) std::printf(i ? " %.4f" : "%.4f", scores[i]);
+            std::printf("\n");
+        } else {
+            std::printf("error\tcannot read: %s\n", line.substr(0, 80).c_str());
+        }
+        std::printf("end\n");
+        std::fflush(stdout);
+    }
     return 0;
 }
 
@@ -806,6 +888,7 @@ int main(int argc, char** argv) {
     if (o.command == "show") return show(o);
     if (o.command == "match") return match(o);
     if (o.command == "raster") return raster(o);
+    if (o.command == "oracle") return oracle(o);
     if (o.command == "bench") return bench(o);
     usage();
     return 2;
