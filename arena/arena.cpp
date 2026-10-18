@@ -73,6 +73,12 @@ void Arena::clampInto(Piece& p) const {
     p.y = std::max(0, std::min(settings_.height - s.height, p.y));
 }
 
+int Arena::fitBudget(Army& army) const {
+    int dropped = 0;
+    while (!army.pieces.empty() && cost(army) > settings_.budget) army.pieces.pop_back(), ++dropped;
+    return dropped;
+}
+
 void Arena::repair(Army& army, Rng& rng) const {
     auto& ps = army.pieces;
     for (auto& p : ps) clampInto(p);

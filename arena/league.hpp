@@ -35,6 +35,16 @@ bool writeLeagueJson(const std::string& path, const Arena& arena, const std::vec
                      const std::vector<double>& meta, const std::vector<std::vector<double>>& payoff,
                      std::string& error, const std::string& extra = "");
 
+// Armies of an existing league as the start of a new one (train --from). An
+// army over the budget is repaired with Arena::fitBudget (pieces are dropped
+// from the end of the army until it fits); empty, unreadable and duplicate
+// armies are dropped.
+struct SeedReport {
+    int kept = 0, repaired = 0, empty = 0, duplicates = 0;
+};
+std::vector<Army> seedArmies(const Arena& arena, const std::vector<std::pair<std::string, std::string>>& raw,
+                             const std::string& sourceName, SeedReport& report);
+
 // Writes to a temporary file first and renames it, so an interrupted save never
 // leaves a half-written file.
 bool writeTextFile(const std::string& path, const std::string& content, std::string& error);

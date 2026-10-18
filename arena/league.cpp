@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 #include <stdexcept>
 
 namespace arena {
@@ -55,6 +56,32 @@ std::string number(double v) {
 }
 
 }  // namespace
+
+std::vector<Army> seedArmies(const Arena& arena, const std::vector<std::pair<std::string, std::string>>& raw,
+                             const std::string& sourceName, SeedReport& report) {
+    std::vector<Army> armies;
+    std::unordered_set<std::string> keys;
+    for (const auto& [origin, text] : raw) {
+        Army a;
+        a.origin = origin + " (" + sourceName + ")";
+        if (!parsePieces(arena, text, a)) {
+            ++report.empty;
+            continue;
+        }
+        if (arena.fitBudget(a) > 0) ++report.repaired;
+        if (a.pieces.empty() || !arena.legal(a)) {
+            ++report.empty;
+            continue;
+        }
+        if (!keys.insert(armyKey(arena, a)).second) {
+            ++report.duplicates;
+            continue;
+        }
+        armies.push_back(std::move(a));
+    }
+    report.kept = static_cast<int>(armies.size());
+    return armies;
+}
 
 bool readLeague(const std::string& path, LeagueFile& out, std::string& error) {
     std::ifstream in(path);

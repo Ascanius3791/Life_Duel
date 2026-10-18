@@ -85,6 +85,9 @@ public:
     int cost(const Army& army) const;
     // Inside the red zone and within budget.
     bool legal(const Army& army) const;
+    // Deterministic budget repair: drops pieces from the end of the army until
+    // the cost fits. Returns the number of pieces dropped.
+    int fitBudget(Army& army) const;
     // Moves pieces back into the zone and drops random pieces until the budget fits.
     void repair(Army& army, Rng& rng) const;
 

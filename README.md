@@ -42,6 +42,10 @@ configure with `-DGOL_NATIVE=OFF`.
 
 ### Playing against the bot
 
+> The prices changed to "one point per live cell". The leagues in `assets/leagues/`
+> were trained with the old, hand-set prices; armies over budget under the new
+> prices are no longer valid, so retrain before shipping (`life_arena train --from`).
+
 Click **vs Bot** at the top left of Life Duel. The bot is a league trained by
 `life_arena` (see below). The leagues in `assets/leagues/` were trained on the
 Medium board with 120 points, a 2000 generation limit and the Birthright rule,
@@ -182,6 +186,7 @@ every push to `main` and deploys `dist/` to GitHub Pages. In the repository's
 ```bash
 ./build/life_arena train --league league.txt --iterations 50   # creates or resumes league.txt
 ./build/life_arena train --twins --league league.txt           # twin leagues, stops by itself (see below)
+./build/life_arena train --league new.txt --from old.txt --iterations 50   # new league seeded with old.txt's armies (over-budget ones lose pieces from their end)
 ./build/life_arena show --league league.txt                    # armies with their Nash weights
 ./build/life_arena show --league league.txt 12                 # draw army #12
 ./build/life_arena match --league league.txt 12 7              # #12 as red against #7 as blue
@@ -340,7 +345,7 @@ which is not committed.
 ```
 core/       gol_core library
   life.*      classic B3/S23 grid (torus or bounded), with cell ages for colouring
-  patterns.*  RLE parser, pattern library, battle arsenal and prices
+  patterns.*  RLE parser, pattern library, battle arsenal (a piece costs its number of live cells)
   battle.*    coloured battle rules, end detection, battlefield presets, board encoding
   fast_battle.*  the same rules bit-parallel, for bulk simulation
 classic/    life_classic (SFML) + a tiny immediate-mode widget layer
@@ -361,7 +366,7 @@ assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mo
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/config` | arsenal (patterns + costs), battlefield presets, board sizes |
+| `GET /api/config` | arsenal (patterns + costs = live cells), battlefield presets, board sizes |
 | `GET /api/battlefield?w&h&preset&count&seed` | generated grey battlefield |
 | `POST /api/battle?w&h&maxgen&variant&home` (body = board) | start a battle, returns the first frame (`maxgen=0`: no limit; `home=0`: cells in their own starting area don't count, the frames then also carry `redHome`/`blueHome`) |
 | `GET /api/step?id&n=K` or `&ms=T` | advance K generations, or as many as fit into T ms; `board=0` omits the board |

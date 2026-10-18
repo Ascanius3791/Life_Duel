@@ -144,6 +144,9 @@ void usage() {
         "against the rest of the pool. FILE.state keeps the table, FILE.csv logs every iteration.\n"
         "  --pool-size N      capacity of the pool (default 1000)\n"
         "  --from A,B         seed a new pool with the armies of these leagues (same settings);\n"
+        "                     with train: one league FILE starts a new league from its armies and settings;\n"
+        "                     armies over the budget lose pieces from their end until they fit, empty and\n"
+        "                     duplicate armies are dropped (the counts are reported)\n"
         "                     without it a new pool starts with --seeds random armies\n"
         "  --sample K         opponents per search round (default 24)\n"
         "  --halving A,B,..   successive halving instead: every candidate plays A opponents, the\n"
@@ -383,12 +386,40 @@ int train(const Options& o) {
     const bool resumed = loadLeague(o, settings, raw, true);
     if (resumed && o.settingsGiven)
         std::printf("note: %s exists, using its battle settings and ignoring the ones given\n", o.league.c_str());
+    if (resumed && !o.from.empty())
+        std::printf("note: %s exists, continuing it and ignoring --from\n", o.league.c_str());
+    LeagueFile source;
+    const bool seeded = !resumed && !o.from.empty();
+    if (seeded) {
+        std::string error;
+        if (!readLeague(o.from, source, error)) {
+            std::fprintf(stderr, "%s\n", error.c_str());
+            return 1;
+        }
+        settings = source.settings;
+    }
 
     const Arena arena(settings);
-    std::vector<Army> parsed = parseArmies(arena, raw);
-    if (!resumed) std::printf("new league %s with %d random armies\n", o.league.c_str(), o.seeds);
+    std::vector<Army> parsed;
+    if (seeded) {
+        SeedReport report;
+        parsed = seedArmies(arena, source.armies, std::filesystem::path(o.from).filename().string(), report);
+        std::printf("seeded from %s: %zu armies read, %d kept, %d repaired (over budget, pieces dropped), "
+                    "%d empty or invalid dropped, %d duplicates dropped\n",
+                    o.from.c_str(), source.armies.size(), report.kept, report.repaired, report.empty,
+                    report.duplicates);
+        if (parsed.empty()) {
+            std::fprintf(stderr, "no army of %s survives\n", o.from.c_str());
+            return 1;
+        }
+    } else {
+        parsed = parseArmies(arena, raw);
+    }
+    if (seeded) std::printf("new league %s with %zu seeded armies\n", o.league.c_str(), parsed.size());
+    else if (!resumed) std::printf("new league %s with %d random armies\n", o.league.c_str(), o.seeds);
     else std::printf("resuming %s with %zu armies\n", o.league.c_str(), parsed.size());
-    LeagueTrainer league(arena, std::move(parsed), resumed, o.rng, o.seeds);
+    // A seeded league gets no random armies on top.
+    LeagueTrainer league(arena, std::move(parsed), resumed || seeded, o.rng, o.seeds);
     printSettings(arena, o.threads);
     RunLog log;
     if (!openMatchLog(o, arena, log)) return 1;
@@ -400,6 +431,10 @@ int train(const Options& o) {
 
     const SearchOptions options = searchOptions(o);
     for (int iter = 1; iter <= o.iterations; ++iter) {
+        if (o.maxHours > 0 && secondsSince(t0) > o.maxHours * 3600) {
+            std::printf("time is up (--max-hours)\n");
+            break;
+        }
         const auto start = Clock::now();
         const IterationResult r = trainIteration({&league}, options, o.threads, [&](int gen) {
             std::printf("\r  iter %d  search gen %2d/%d  best %+.3f   ", iter, gen, o.generations,

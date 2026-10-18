@@ -178,9 +178,37 @@ void testTwins() {
           back[0].xA == 0.1234 && back[1].xB == 0.0301);
 }
 
+// train --from: armies over the budget are repaired deterministically, empty
+// and duplicate armies are dropped.
+void testSeedArmies() {
+    Settings s;
+    s.width = 120;
+    s.height = 60;
+    s.preset = "empty";
+    s.maxGenerations = 100;
+    s.budget = 20;
+    const Arena arena(s);
+    const std::vector<std::pair<std::string, std::string>> raw = {
+        {"fits", "block@1,1,r0,m0;glider@10,10,r0,m0"},                                    // 4 + 5
+        {"over", "block@1,1,r0,m0;pulsar@20,20,r0,m0;glider@10,10,r0,m0;cell@5,5,r0,m0"},  // 4 + 48 + 5 + 1
+        {"again", "block@1,1,r0,m0;glider@10,10,r0,m0"},                                   // same as "fits"
+        {"empty", ""},
+        {"huge", "gosper_gun@1,1,r0,m0;gosper_gun@30,30,r0,m0"},                           // 36 cells each
+    };
+    SeedReport report;
+    const auto armies = seedArmies(arena, raw, "src.txt", report);
+    CHECK(armies.size() == 2);
+    CHECK(report.kept == 2 && report.repaired == 2 && report.duplicates == 1 && report.empty == 2);
+    for (const auto& a : armies) CHECK(arena.legal(a));
+    // "over" (58 points) loses its last pieces until it fits: cell, glider and pulsar go.
+    CHECK(formatPieces(arena, armies[1]) == "block@1,1,r0,m0");
+    CHECK(armies[0].origin == "fits (src.txt)");
+}
+
 }  // namespace
 
 int main() {
+    testSeedArmies();
     for (const char* preset : {"random_mirror", "random_rotational", "random"}) {
         Settings s;
         s.width = 120;

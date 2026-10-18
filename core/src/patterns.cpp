@@ -153,13 +153,15 @@ const Pattern* findPattern(std::string_view id) {
 }
 
 const std::vector<ArsenalItem>& battleArsenal() {
-    static const std::vector<ArsenalItem> arsenal = {
-        {"cell", 1},          {"block", 3},       {"beehive", 4},  {"eater1", 6},
-        {"blinker", 3},       {"pulsar", 16},     {"pentadecathlon", 12},
-        {"glider", 5},        {"lwss", 9},        {"mwss", 12},    {"hwss", 15},
-        {"copperhead", 18},   {"r_pentomino", 8}, {"diehard", 10}, {"acorn", 12},
-        {"gosper_gun", 40},   {"simkin_gun", 40},
-    };
+    // A piece costs its number of live cells.
+    static const std::vector<ArsenalItem> arsenal = [] {
+        const char* const ids[] = {"cell",       "block",   "beehive", "eater1",      "blinker",     "pulsar",
+                                   "pentadecathlon", "glider", "lwss",    "mwss",        "hwss",        "copperhead",
+                                   "r_pentomino", "diehard", "acorn",   "gosper_gun", "simkin_gun"};
+        std::vector<ArsenalItem> items;
+        for (const char* id : ids) items.push_back({id, static_cast<int>(findPattern(id)->cells.size())});
+        return items;
+    }();
     return arsenal;
 }
 

@@ -341,7 +341,18 @@ static void testBattlefieldsArePortable() {
     }
 }
 
+// A piece costs its number of live cells.
+static void testArsenalPrices() {
+    CHECK(!battleArsenal().empty());
+    for (const auto& item : battleArsenal()) {
+        const Pattern* p = findPattern(item.patternId);
+        CHECK(p != nullptr);
+        if (p) CHECK(item.cost == static_cast<int>(p->cells.size()));
+    }
+}
+
 int main() {
+    testArsenalPrices();
     testBattlefieldsArePortable();
     testClassic();
     testBattle();

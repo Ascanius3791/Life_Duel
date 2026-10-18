@@ -40,14 +40,16 @@ Nobody gets to act once the battle has started.
    | Pattern | Cost | | Pattern | Cost |
    |---|---:|---|---|---:|
    | Single cell | 1 | | Glider | 5 |
-   | Block | 3 | | Lightweight spaceship | 9 |
-   | Blinker | 3 | | Middleweight spaceship | 12 |
-   | Beehive | 4 | | Heavyweight spaceship | 15 |
-   | Eater 1 | 6 | | Copperhead | 18 |
-   | R-pentomino | 8 | | Pentadecathlon | 12 |
-   | Diehard | 10 | | Pulsar | 16 |
-   | Acorn | 12 | | Gosper glider gun | 40 |
-   | | | | Simkin glider gun | 40 |
+   | Block | 4 | | Lightweight spaceship | 9 |
+   | Blinker | 3 | | Middleweight spaceship | 11 |
+   | Beehive | 6 | | Heavyweight spaceship | 13 |
+   | Eater 1 | 7 | | Copperhead | 28 |
+   | R-pentomino | 5 | | Pentadecathlon | 12 |
+   | Diehard | 7 | | Pulsar | 48 |
+   | Acorn | 7 | | Gosper glider gun | 36 |
+   | | | | Simkin glider gun | 36 |
+
+   A pattern costs one point per live cell.
 
    Every moving pattern in the arsenal starts out flying (or shooting) towards
    the opponent: Red's face east, Blue's are mirrored to face west. You can

@@ -35,7 +35,7 @@ Pattern transformed(const Pattern& pattern, int quarterTurns, bool mirror);
 const std::vector<Pattern>& patternLibrary();
 const Pattern* findPattern(std::string_view id);
 
-// Patterns available in the 1v1 battle mode together with their price.
+// Patterns available in the 1v1 battle mode together with their price (their number of live cells).
 struct ArsenalItem {
     std::string patternId;
     int cost = 0;
