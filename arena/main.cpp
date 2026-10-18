@@ -12,9 +12,9 @@
 // league's armies (cross-evaluation); training stops when neither can exploit
 // the other, when that stops improving, or when the budget is spent.
 //
-// `pool` trains without a payoff matrix, so the population can grow to
-// thousands of armies: each new army is searched against random members of
-// the whole pool (fictitious play), see poolIteration.
+// `pool` keeps a fixed number of armies (up to thousands): each iteration
+// searches an army against random pool members, and if it passes the entrance
+// test it replaces the pool's weakest army, see poolIteration.
 #include "arena.hpp"
 #include "league.hpp"
 #include "match_log.hpp"
@@ -76,7 +76,8 @@ struct Options {
     std::string logMatches;
     std::string from;   // pool: leagues that seed a new pool, comma separated
     int sample = 24;    // pool: opponents per search generation
-    int validate = 64;  // pool: opponents of the final check
+    int finalists = 4;  // pool: new armies of the search that take the entrance test
+    std::vector<int> gate = {64, 256};  // pool: stages of the entrance test before "everyone"
     int poolSize = 0;   // pool: capacity (0 = keep the pool's, 1000 for a new one)
     std::vector<int> halving;  // pool: successive halving stages, e.g. 4,8,16
 };
@@ -87,7 +88,7 @@ void usage() {
         "\n"
         "  life_arena train [options]       grow the league (creates it if missing, resumes otherwise)\n"
         "  life_arena show [options] [ID]   list the league with Nash weights; with ID draw that army\n"
-        "  life_arena pool [options]        grow a pool of armies by fictitious play (see below)\n"
+        "  life_arena pool [options]        train a fixed-size pool of armies (see below)\n"
         "  life_arena match [options] A B   play army A (red) against army B (blue)\n"
         "  life_arena bench [options]       compare the reference and the bit-parallel engine\n"
         "\n"
@@ -134,18 +135,21 @@ void usage() {
         "                     answer requests on stdin (random / mutated armies, their bitmaps,\n"
         "                     real scores against league armies) for an outside search\n"
         "\n"
-        "Pool training (pool --league FILE): a pool of at most N armies, no payoff matrix. Every\n"
-        "iteration searches an army against random pool armies (new ones every search generation);\n"
-        "its score is its mean against a fresh random sample. Once the pool is full it replaces the\n"
-        "army with the lowest current score (stored score - replacements since it joined / 3N) if it\n"
-        "beats that. FILE.state keeps the scores, FILE.csv logs every iteration.\n"
+        "Pool training (pool --league FILE): a pool of at most N armies with the complete table of\n"
+        "their results against each other; an army's score is its exact mean against the others.\n"
+        "Every iteration (a generation once the pool is full) searches an army against random pool\n"
+        "armies (new ones every search round, --gens rounds); the best new ones take the entrance\n"
+        "test, and the winner replaces the army with the lowest score if it beats that army's score\n"
+        "against the rest of the pool. FILE.state keeps the table, FILE.csv logs every iteration.\n"
         "  --pool-size N      capacity of the pool (default 1000)\n"
         "  --from A,B         seed a new pool with the armies of these leagues (same settings);\n"
         "                     without it a new pool starts with --seeds random armies\n"
-        "  --sample K         opponents per search generation (default 24)\n"
+        "  --sample K         opponents per search round (default 24)\n"
         "  --halving A,B,..   successive halving instead: every candidate plays A opponents, the\n"
         "                     better half plays on up to B, and so on (the last number replaces --sample)\n"
-        "  --validate V       opponents of the final check, which gives the score (default 64)\n"
+        "  --finalists F      new armies of the last search round that take the entrance test (default 4)\n"
+        "  --gate A,B,..      the test: the finalists play A pool armies, the better half plays on up\n"
+        "                     to B, ..., the last one plays all the others (default 64,256; all = at once)\n"
         "  --min-gain X       while the pool is not full: the score needed to join (default 0.02)\n"
         "  --iterations N, --max-hours H, --pop, --gens, --rng, --log-matches\n"
         "\n"
@@ -207,19 +211,23 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--log-matches") o.logMatches = value();
         else if (a == "--from") o.from = value();
         else if (a == "--sample") o.sample = std::max(1, integer());
-        else if (a == "--validate") o.validate = std::max(1, integer());
+        else if (a == "--finalists") o.finalists = std::max(1, integer());
         else if (a == "--pool-size") o.poolSize = std::max(1, integer());
-        else if (a == "--halving") {
-            std::stringstream list(value());
+        else if (a == "--halving" || a == "--gate") {
+            const std::string text = value();
+            std::vector<int>& list = a == "--gate" ? o.gate : o.halving;
+            list.clear();
+            std::stringstream in(text);
             std::string item;
-            o.halving.clear();
-            while (std::getline(list, item, ',')) {
+            while (a == "--halving" || text != "all") {
+                if (!std::getline(in, item, ',')) break;
                 const int k = std::atoi(item.c_str());
-                if (k < 1 || (!o.halving.empty() && k <= o.halving.back())) {
-                    std::fprintf(stderr, "--halving needs increasing numbers of opponents, e.g. 4,8,16\n");
+                if (k < 1 || (!list.empty() && k <= list.back())) {
+                    std::fprintf(stderr, "%s needs increasing numbers of opponents, e.g. %s\n", a.c_str(),
+                                 a == "--gate" ? "64,256 (or all)" : "4,8,16");
                     return false;
                 }
-                o.halving.push_back(k);
+                list.push_back(k);
             }
         }
         else if (a == "--battles") o.battles = std::max(1, integer());
@@ -766,22 +774,18 @@ bool sameSettings(const Settings& a, const Settings& b) {
            a.variant == b.variant;
 }
 
-// FILE.state: the pool's bookkeeping next to its armies (same order as in FILE).
-//   # life_arena pool state v1
+// FILE.state: the pool's bookkeeping and results table (armies in FILE's order).
+//   # life_arena pool state v2
 //   capacity 1000
 //   replaced 42
 //   next 230
-//   score <TAB> stored <TAB> since       one line per army
+//   size 3
+//   payoff                          then size*size little-endian floats, row by row
 bool writePoolState(const std::string& path, const Pool& pool, std::string& error) {
     std::ostringstream out;
-    out << "# life_arena pool state v1\ncapacity " << pool.capacity << "\nreplaced " << pool.replaced << "\nnext "
-        << pool.nextId << '\n';
-    char buf[64];
-    for (int i = 0; i < pool.size(); ++i) {
-        std::snprintf(buf, sizeof buf, "score\t%.6f\t%lld\n", pool.stored[static_cast<std::size_t>(i)],
-                      pool.since[static_cast<std::size_t>(i)]);
-        out << buf;
-    }
+    out << "# life_arena pool state v2\ncapacity " << pool.capacity << "\nreplaced " << pool.replaced << "\nnext "
+        << pool.nextId << "\nsize " << pool.size() << "\npayoff\n";
+    for (const auto& row : pool.payoff) out.write(reinterpret_cast<const char*>(row.data()), static_cast<std::streamsize>(row.size() * sizeof(float)));
     return writeTextFile(path, out.str(), error);
 }
 
@@ -791,25 +795,36 @@ bool readPoolState(const std::string& path, Pool& pool) {
     if (!readTextFile(path, text)) return false;
     std::istringstream in(text);
     std::string line;
-    std::vector<double> stored;
-    std::vector<long long> since;
-    while (std::getline(in, line)) {
+    int size = -1;
+    Pool p;
+    if (!std::getline(in, line) || line != "# life_arena pool state v2") return false;
+    while (std::getline(in, line) && line != "payoff") {
         std::istringstream f(line);
         std::string key;
         f >> key;
-        if (key == "capacity") f >> pool.capacity;
-        else if (key == "replaced") f >> pool.replaced;
-        else if (key == "next") f >> pool.nextId;
-        else if (key == "score") {
-            double v;
-            long long s;
-            if (f >> v >> s) stored.push_back(v), since.push_back(s);
-        }
+        if (key == "capacity") f >> p.capacity;
+        else if (key == "replaced") f >> p.replaced;
+        else if (key == "next") f >> p.nextId;
+        else if (key == "size") f >> size;
     }
-    if (static_cast<int>(stored.size()) != pool.size()) return false;
-    pool.stored = std::move(stored);
-    pool.since = std::move(since);
+    if (size != pool.size()) return false;
+    const auto n = static_cast<std::size_t>(size);
+    p.payoff.assign(n, std::vector<float>(n));
+    p.sum.assign(n, 0);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!in.read(reinterpret_cast<char*>(p.payoff[i].data()), static_cast<std::streamsize>(n * sizeof(float)))) return false;
+        for (float v : p.payoff[i]) p.sum[i] += v;
+    }
+    p.armies = std::move(pool.armies);
+    pool = std::move(p);
     return true;
+}
+
+bool savePool(const std::string& league, const Arena& arena, const Pool& pool) {
+    std::string error;
+    if (writeLeague(league, arena, pool.armies, error) && writePoolState(league + ".state", pool, error)) return true;
+    std::fprintf(stderr, "%s\n", error.c_str());
+    return false;
 }
 
 int pool(const Options& o) {
@@ -849,86 +864,74 @@ int pool(const Options& o) {
     Rng rng(o.rng ^ (pool.armies.size() * 0x9e3779b97f4a7c15ull));
     if (!resumed && pool.armies.empty())
         for (int i = 0; i < o.seeds; ++i) pool.armies.push_back(arena.randomArmy(rng)), pool.armies.back().origin = "random";
-    const std::string statePath = o.league + ".state";
-    const bool stateRead = resumed && readPoolState(statePath, pool);
+    const bool stateRead = resumed && readPoolState(o.league + ".state", pool);
     if (o.poolSize > 0) pool.capacity = o.poolSize;
-    if (!stateRead) {
-        // A new pool (or one without its state): every army is scored once now.
-        pool.stored.assign(pool.armies.size(), 0);
-        pool.since.assign(pool.armies.size(), 0);
-        for (const Army& a : pool.armies)
-            if (a.origin.rfind("pool ", 0) == 0) pool.nextId = std::max(pool.nextId, std::atoi(a.origin.c_str() + 5) + 1);
-    }
     std::printf("%s pool %s: %d armies, capacity %d, %lld replaced so far\n", resumed ? "resuming" : "new",
                 o.league.c_str(), pool.size(), pool.capacity, pool.replaced);
     printSettings(arena, o.threads);
     RunLog log;
     if (!openMatchLog(o, arena, log)) return 1;
 
-    std::string error;
     const auto t0 = Clock::now();
     if (!stateRead) {
-        std::vector<int> all(static_cast<std::size_t>(pool.size()));
-        for (int i = 0; i < pool.size(); ++i) all[static_cast<std::size_t>(i)] = i;
-        scorePoolArmies(arena, pool, all, o.validate, rng, o.threads);
-        std::printf("scored the %d armies against %d others each in %.1fs\n", pool.size(), o.validate,
-                    secondsSince(t0));
+        // A new pool (or one without its state): every pair plays once.
+        for (const Army& a : pool.armies)
+            if (a.origin.rfind("pool ", 0) == 0) pool.nextId = std::max(pool.nextId, std::atoi(a.origin.c_str() + 5) + 1);
+        const long long played = fillPool(arena, pool, std::move(pool.armies), o.threads);
+        std::printf("played all %lld pairs of the %d armies in %.1fs\n", played, pool.size(), secondsSince(t0));
     }
-    // A pool seeded with more armies than it holds drops its weakest first.
-    while (pool.size() > pool.capacity) {
-        const auto w = static_cast<std::ptrdiff_t>(pool.weakest());
-        pool.armies.erase(pool.armies.begin() + w);
-        pool.stored.erase(pool.stored.begin() + w);
-        pool.since.erase(pool.since.begin() + w);
-    }
-    if (!writeLeague(o.league, arena, pool.armies, error) || !writePoolState(statePath, pool, error)) {
-        std::fprintf(stderr, "%s\n", error.c_str());
-        return 1;
-    }
+    // A pool seeded with more armies than it holds drops its weakest, one by one.
+    while (pool.size() > pool.capacity) pool.remove(pool.weakest());
+    if (!savePool(o.league, arena, pool)) return 1;
     const std::string csvPath = o.league + ".csv";
     const bool newCsv = !std::filesystem::exists(csvPath);
     std::ofstream csv(csvPath, std::ios::app);
-    if (newCsv) csv << "pool,replaced,fitness,validation,threshold,result,removed,matches,seconds\n";
+    if (newCsv) csv << "pool,replaced,fitness,score,threshold,result,removed,matches,gate_matches,seconds\n";
 
     PoolOptions options;
     options.population = o.population;
-    options.generations = o.generations;
+    options.search = o.generations;
     options.sample = o.halving.empty() ? o.sample : o.halving.back();
     options.halving = o.halving;
-    options.validate = o.validate;
+    options.finalists = o.finalists;
+    options.gate = o.gate;
     options.minGain = o.minGain;
     int added = 0;
+    auto saved = Clock::now();
     for (int iter = 1; iter <= o.iterations; ++iter) {
         if (o.maxHours > 0 && secondsSince(t0) > o.maxHours * 3600) {
             std::printf("time is up (--max-hours)\n");
             break;
         }
         const auto start = Clock::now();
-        const PoolResult r = poolIteration(arena, pool, options, rng, o.threads, [&](int gen, double best) {
-            std::printf("\r  iter %d  search gen %2d/%d  best %+.3f   ", iter, gen, o.generations, best);
+        const PoolResult r = poolIteration(arena, pool, options, rng, o.threads, [&](int round, double best) {
+            std::printf("\r  iter %d  search round %2d/%d  best %+.3f   ", iter, round, o.generations, best);
             std::fflush(stdout);
         });
         const double seconds = secondsSince(start);
         added += r.added;
         const char* outcome = r.known ? "known" : !r.added ? "rejected" : r.removed.empty() ? "added" : "replaced";
         std::printf("\r%60s\r", "");
-        std::printf("iter %4d  pool %4d  fitness %+.3f  score %+.3f vs %+.3f  ", iter, pool.size(), r.fitness,
-                    r.validation, r.threshold);
-        if (r.known) std::printf("a pool army won the search");
+        if (pool.size() >= pool.capacity && r.added && !r.removed.empty()) std::printf("gen %5lld  ", pool.replaced);
+        else std::printf("iter %4d  ", iter);
+        std::printf("pool %4d  fitness %+.3f  score %+.3f vs %+.3f  ", pool.size(), r.fitness, r.score, r.threshold);
+        if (r.known) std::printf("no new army among the best");
         else if (!r.added) std::printf("not good enough");
         else if (r.removed.empty()) std::printf("added");
         else std::printf("replaced %s", r.removed.c_str());
-        std::printf("  %.1fs, %.0f matches/s\n", seconds, r.matches / seconds);
+        std::printf("  %.1fs (test %lld battles), %.0f matches/s\n", seconds, r.gateMatches, r.matches / seconds);
         std::string removed = r.removed;
         std::replace(removed.begin(), removed.end(), ',', ' ');
-        csv << pool.size() << ',' << pool.replaced << ',' << r.fitness << ',' << r.validation << ',' << r.threshold
-            << ',' << outcome << ',' << removed << ',' << r.matches << ',' << seconds << '\n';
+        csv << pool.size() << ',' << pool.replaced << ',' << r.fitness << ',' << r.score << ',' << r.threshold << ','
+            << outcome << ',' << removed << ',' << r.matches << ',' << r.gateMatches << ',' << seconds << '\n';
         csv.flush();
-        if (r.added && (!writeLeague(o.league, arena, pool.armies, error) || !writePoolState(statePath, pool, error))) {
-            std::fprintf(stderr, "%s\n", error.c_str());
-            return 1;
+        // The table of a large pool is big: save at most once a minute (and at the end).
+        if (r.added && secondsSince(saved) > 60) {
+            if (!savePool(o.league, arena, pool)) return 1;
+            saved = Clock::now();
         }
     }
+    if (!savePool(o.league, arena, pool)) return 1;
     std::printf("pool %s: %d armies, %d joined in this run, %lld replaced in total (%.1f min)\n", o.league.c_str(),
                 pool.size(), added, pool.replaced, secondsSince(t0) / 60);
     return 0;

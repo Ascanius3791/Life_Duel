@@ -127,67 +127,74 @@ std::vector<IterationResult> trainIteration(const std::vector<LeagueTrainer*>& l
 // ---------------------------------------------------------------------------
 // Pool training
 // ---------------------------------------------------------------------------
-// A pool of at most `capacity` armies, far too many for a payoff matrix. Every
-// army carries the score it had when it joined (its mean score against a
-// random sample of the pool at that time). Since the pool gets stronger, old
-// scores are worth less: an army's current score is
-//   stored - (armies replaced since it joined) / (3 * capacity),
-// so after the pool has turned over once it has lost 1/3.
+// A pool of at most `capacity` armies with the complete table of their
+// results against each other. Battles are deterministic, so one battle per
+// pair is the exact result, and an army's score is its exact mean against all
+// other armies in the pool *now*: no sampling luck, and wins against armies
+// that have left the pool no longer count. The table holds capacity^2 floats
+// (4 MB at 1000, 400 MB at 10000). Every army that joins plays everyone
+// already there, so the table stays complete.
 struct Pool {
     int capacity = 1000;
-    long long replaced = 0;          // armies removed from the pool so far
-    int nextId = 1;                  // number of the next army that joins ("pool N")
-    std::vector<Army> armies;        // oldest first
-    std::vector<double> stored;      // score when the army joined
-    std::vector<long long> since;    // `replaced` when it joined
+    long long replaced = 0;  // armies removed from the pool so far (the generation number)
+    int nextId = 1;          // number of the next army that joins ("pool N")
+    std::vector<Army> armies;                // oldest first
+    std::vector<std::vector<float>> payoff;  // payoff[i][j]: score of army i against army j
+    std::vector<double> sum;                 // row sums of payoff
 
     int size() const { return static_cast<int>(armies.size()); }
-    double score(int i) const {
-        return stored[static_cast<std::size_t>(i)] -
-               static_cast<double>(replaced - since[static_cast<std::size_t>(i)]) / (3.0 * capacity);
+    double score(int i) const {  // mean against all other pool armies
+        return size() > 1 ? sum[static_cast<std::size_t>(i)] / (size() - 1) : 0;
     }
-    int weakest() const;  // index of the lowest current score (-1 if empty)
+    int weakest() const;  // index of the lowest score (-1 if empty)
+    void remove(int i);  // (does not count as a replacement)
+    // Appends `army`; row[j] = its score against armies[j] for every current army.
+    void add(Army army, const std::vector<float>& row);
 };
+
+// Plays every pair of `armies` once and makes them the pool (keeping its
+// capacity and counters). Returns the number of battles.
+long long fillPool(const Arena& arena, Pool& pool, std::vector<Army> armies, int threads);
 
 struct PoolOptions {
     int population = 24;
-    int generations = 20;
-    int sample = 24;     // opponents per search generation
-    // Successive halving within a generation, e.g. {4, 8, 16}: every candidate
+    int search = 20;  // rounds of the evolutionary search
+    int sample = 24;  // opponents per search round
+    // Successive halving within a round, e.g. {4, 8, 16}: every candidate
     // plays the first 4 opponents of the sample, the better half plays on up to
     // 8, the better half of those up to 16 (the last entry replaces `sample`).
     // Empty: every candidate plays the whole sample.
     std::vector<int> halving;
-    int validate = 64;   // opponents of the final check, which gives the stored score
+    // The entrance test: the best `finalists` new armies of the search play
+    // gate[0] pool armies, the better half plays on up to gate[1], ..., and the
+    // last one left plays everyone else. Opponents are drawn without
+    // replacement, the same ones for all finalists.
+    int finalists = 4;
+    std::vector<int> gate = {64, 256};
     double minGain = 0;  // while the pool is not full: the score needed to join
 };
 
 struct PoolResult {
-    double fitness = 0;     // best fitness in the last generation (on that generation's sample)
-    double validation = 0;  // the best army's mean score against a fresh sample: its score if it joins
-    double threshold = 0;   // the score it had to beat: minGain, or the weakest army's current score
+    double fitness = 0;    // best fitness in the last search round (on that round's sample)
+    double score = 0;      // the entrant's exact mean against the pool (without the army it would replace)
+    double threshold = 0;  // what it had to beat: minGain, or the weakest army's exact score
     bool added = false;
-    bool known = false;     // the best army is already in the pool (one of the starting population)
-    std::string removed;    // origin of the army it replaced, if any
-    long long matches = 0;
+    bool known = false;    // no new army among the search's best (all are pool armies already)
+    std::string removed;   // origin of the army it replaced, if any
+    long long matches = 0;      // battles in total
+    long long gateMatches = 0;  // of which in the entrance test
 };
 
 // One iteration: an evolutionary search for an army that beats the pool,
-// judged in every generation against `sample` pool armies drawn anew at random
-// (so the candidates cannot specialise on a few opponents). The best army of
-// the last generation then plays `validate` freshly drawn pool armies; that
-// mean is its score. While the pool is not full it joins if the score exceeds
-// minGain; once full, it replaces the army with the lowest current score if
-// it beats that. Joined armies are appended with origin "pool N".
-using PoolProgress = std::function<void(int generation, double best)>;
+// judged in every round against `sample` pool armies drawn anew at random (so
+// the candidates cannot specialise on a few opponents), then the entrance
+// test. While the pool is not full the entrant joins if its exact score
+// exceeds minGain; once full, it replaces the army with the lowest exact
+// score if it beats that army's score on the same opponents (the pool without
+// that army). Joined armies are appended with origin "pool N".
+using PoolProgress = std::function<void(int round, double best)>;
 PoolResult poolIteration(const Arena& arena, Pool& pool, const PoolOptions& options, Rng& rng, int threads,
                          const PoolProgress& progress = nullptr);
-
-// Gives the armies `which` (e.g. the seeds of a new pool) their stored score:
-// the mean against `validate` other pool armies drawn at random. Returns the
-// number of battles played.
-long long scorePoolArmies(const Arena& arena, Pool& pool, const std::vector<int>& which, int validate, Rng& rng,
-                          int threads);
 
 // ---------------------------------------------------------------------------
 // Twin training
