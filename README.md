@@ -289,21 +289,25 @@ battle per pair is exact, and an army's **score** is its exact mean against
 every other army in the pool *now*: no luck from drawn opponents, and wins
 against armies that have left the pool stop counting.
 
-- Each iteration searches an army against armies drawn at random from the
+- Each iteration searches for armies against armies drawn at random from the
   pool, drawn anew for every search round (`--gens` rounds), so it cannot
   specialise on a few opponents. With `--halving 4,8,16` every candidate plays
   4 of them, the better half plays on up to 8, and so on.
-- The entrance test: the best `--finalists` new armies (default 4) play the
-  pool armies in the same random order, a batch at a time (16 first, then 8
-  or a quarter of those played so far). A finalist drops out once we are
+- The entrance test: every new army of the last search round plays the pool
+  armies in the same random order, a batch at a time (16 first, then 8 or a
+  quarter of those played so far). An army drops out once we are
   `--confidence` sure (default 0.95) that its mean against the whole pool will
-  end below the bar, or below the leading finalist's. The last one left plays
-  everyone, which fills its row of the table; a candidate that fails usually
-  costs a few dozen battles instead of a whole pool.
-- While the pool is not full (the warm-up), it joins if its score exceeds
-  `--min-gain`. Once full, it replaces the army with the lowest score if it
-  beats that army's score against the rest of the pool. Each replacement is
-  one **generation**.
+  end below `--min-gain` (default 0.02: it must beat the pool), or that
+  `--max-entrants` others will end above it. The rest play everyone, which
+  fills their rows of the table; a candidate that fails usually costs a few
+  dozen battles instead of a whole pool.
+- Those that passed join best first, at most `--max-entrants` per search
+  (default 2% of the pool size), as long as they still beat the pool (which
+  now includes the armies that joined before them) and are not **copies**: an
+  army whose results against the pool correlate above `--max-similar`
+  (default 0.9) with those of a pool army behaves like it and stays out. Once
+  the pool is full, each one replaces the army with the lowest score; each
+  replacement is one **generation**, and the time before is the warm-up.
 
 ```bash
 ./build/life_arena pool --league data/pool/open.txt --from assets/leagues/open-twins-260x128.txt \

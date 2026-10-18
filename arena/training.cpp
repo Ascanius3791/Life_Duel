@@ -398,36 +398,36 @@ std::pair<double, double> meanSd(const std::vector<double>& x, std::size_t k) {
 }
 
 struct TestOutcome {
-    int winner = -1;          // the finalist that played everyone (-1: all dropped out)
-    double score = -1e9;      // its exact mean, or the best mean so far of those that dropped out
-    std::vector<double> row;  // the winner's results, in the order of the opponents
-    int belowBar = 0, outraced = 0;
+    std::vector<int> passed;               // candidates that played everyone
+    std::vector<std::vector<double>> rows;  // every candidate's results, in the order of the opponents
+    double best = -1e9;                    // best mean so far of those that dropped out
+    int belowBar = 0, behind = 0;
     long long matches = 0;
 };
 
 // The sequential entrance test described at PoolOptions.
-TestOutcome entranceTest(const Arena& arena, const std::vector<const Army*>& finalists,
-                         const std::vector<int>& opponents, double bar, double confidence, const Pool& pool,
-                         int threads) {
+TestOutcome entranceTest(const Arena& arena, const std::vector<const Army*>& candidates,
+                         const std::vector<int>& opponents, double bar, int keep, double confidence,
+                         const Pool& pool, int threads) {
     TestOutcome out;
     const std::size_t total = opponents.size();
     const double z = normalQuantile(confidence);
-    std::vector<std::vector<double>> results(finalists.size(), std::vector<double>(total, 0));
-    std::vector<int> alive(finalists.size());
+    out.rows.assign(candidates.size(), std::vector<double>(total, 0));
+    std::vector<int> alive(candidates.size());
     for (std::size_t i = 0; i < alive.size(); ++i) alive[i] = static_cast<int>(i);
-    auto res = [&](int a) -> const std::vector<double>& { return results[static_cast<std::size_t>(a)]; };
+    auto res = [&](int a) -> const std::vector<double>& { return out.rows[static_cast<std::size_t>(a)]; };
     std::size_t played = 0;
-    bool decided = false;  // one finalist left and surely above the bar: no more checks needed
-    while (played < total) {
+    bool decided = false;  // at most `keep` left and all surely above the bar: no more checks needed
+    while (played < total && !alive.empty()) {
         const std::size_t upto =
             decided ? total
                     : std::min(total, played == 0 ? std::size_t{16} : played + std::max<std::size_t>(8, played / 4));
         std::vector<MatchJob> jobs;
         for (int a : alive)
             for (std::size_t k = played; k < upto; ++k)
-                jobs.push_back({finalists[static_cast<std::size_t>(a)],
+                jobs.push_back({candidates[static_cast<std::size_t>(a)],
                                 &pool.armies[static_cast<std::size_t>(opponents[k])],
-                                &results[static_cast<std::size_t>(a)][k], nullptr});
+                                &out.rows[static_cast<std::size_t>(a)][k], nullptr});
         playJobs(arena, jobs, threads);
         out.matches += static_cast<long long>(jobs.size());
         played = upto;
@@ -437,44 +437,40 @@ TestOutcome entranceTest(const Arena& arena, const std::vector<const Army*>& fin
         // from the first `played` of them (finite-population correction).
         const double f = std::sqrt((1 - static_cast<double>(played) / static_cast<double>(total)) /
                                    static_cast<double>(played));
-        std::vector<int> keep;
+        std::vector<int> above;
         for (int a : alive) {
             const auto [m, sd] = meanSd(res(a), played);
             if (m + z * sd * f < bar) {
                 ++out.belowBar;
-                out.score = std::max(out.score, m);
+                out.best = std::max(out.best, m);
             } else {
-                keep.push_back(a);
+                above.push_back(a);
             }
         }
-        if (keep.empty()) return out;
-        int leader = keep[0];
-        for (int a : keep)
-            if (meanSd(res(a), played).first > meanSd(res(leader), played).first) leader = a;
+        // Behind: surely worse than `keep` others (paired on the same opponents).
         alive.clear();
-        for (int a : keep) {
-            if (a != leader) {
-                std::vector<double> d(played);
-                for (std::size_t k = 0; k < played; ++k) d[k] = res(a)[k] - res(leader)[k];
+        bool allSure = static_cast<int>(above.size()) <= keep;
+        std::vector<double> d(played);
+        for (int a : above) {
+            int worse = 0;
+            for (int b : above) {
+                if (b == a || worse >= keep) continue;
+                for (std::size_t k = 0; k < played; ++k) d[k] = res(a)[k] - res(b)[k];
                 const auto [m, sd] = meanSd(d, played);
-                if (m + z * sd * f < 0) {
-                    ++out.outraced;
-                    continue;
-                }
+                worse += m + z * sd * f < 0;
+            }
+            const auto [m, sd] = meanSd(res(a), played);
+            if (worse >= keep) {
+                ++out.behind;
+                out.best = std::max(out.best, m);
+                continue;
             }
             alive.push_back(a);
+            allSure = allSure && m - z * sd * f > bar;
         }
-        if (alive.size() == 1) {
-            const auto [m, sd] = meanSd(res(alive[0]), played);
-            decided = m - z * sd * f > bar;
-        }
+        decided = allSure && static_cast<int>(alive.size()) <= keep;
     }
-    // Everyone left has played all opponents: the best exact mean wins.
-    out.winner = alive[0];
-    for (int a : alive)
-        if (meanSd(res(a), total).first > meanSd(res(out.winner), total).first) out.winner = a;
-    out.score = meanSd(res(out.winner), total).first;
-    out.row = std::move(results[static_cast<std::size_t>(out.winner)]);
+    out.passed = alive;
     return out;
 }
 
@@ -546,46 +542,106 @@ PoolResult poolIteration(const Arena& arena, Pool& pool, const PoolOptions& opti
     }
     result.fitness = fitness[0];
 
-    // The finalists: the best armies of the last round that are not in the pool yet.
+    // The candidates: the new armies of the last round, best first.
     std::unordered_set<std::string> inPool;
     for (const Army& a : pool.armies) inPool.insert(armyKey(arena, a));
-    std::vector<const Army*> finalists;
-    for (const Army& a : pop) {
-        if (static_cast<int>(finalists.size()) >= std::max(1, options.finalists)) break;
-        if (inPool.insert(armyKey(arena, a)).second) finalists.push_back(&a);
-    }
-    if (finalists.empty()) {
-        result.known = true;
-        return result;
-    }
+    std::vector<const Army*> candidates;
+    for (const Army& a : pop)
+        if (inPool.insert(armyKey(arena, a)).second) candidates.push_back(&a);
+    result.tested = static_cast<int>(candidates.size());
+    if (candidates.empty()) return result;
 
-    // The entrance test, against the pool without the army it would replace.
-    const bool full = n >= pool.capacity;
-    const int weakest = full ? pool.weakest() : -1;
-    const std::vector<int> opponents = drawOpponents(n, n, rng, weakest);
-    result.threshold = full ? pool.score(weakest) : options.minGain;
-    TestOutcome test = entranceTest(arena, finalists, opponents, result.threshold, options.confidence, pool, threads);
-    result.gateMatches = test.matches;
-    result.matches += test.matches;
-    result.score = test.score;
+    // The entrance test against the whole pool.
+    const int keep = std::max(1, options.maxEntrants);
+    const std::vector<int> opponents = drawOpponents(n, n, rng);
+    TestOutcome test =
+        entranceTest(arena, candidates, opponents, options.minGain, keep, options.confidence, pool, threads);
+    result.testMatches = test.matches;
     result.belowBar = test.belowBar;
-    result.outraced = test.outraced;
-    result.droppedOut = test.winner < 0;
-    if (test.winner < 0 || !(result.score > result.threshold)) return result;
+    result.behind = test.behind;
+    result.best = test.best;
 
-    std::vector<float> row(static_cast<std::size_t>(n), 0);
-    for (std::size_t k = 0; k < opponents.size(); ++k)
-        row[static_cast<std::size_t>(opponents[k])] = static_cast<float>(test.row[k]);
-    Army entrant = *finalists[static_cast<std::size_t>(test.winner)];
-    if (full) {
-        result.removed = pool.armies[static_cast<std::size_t>(weakest)].origin;
-        pool.remove(weakest);
-        ++pool.replaced;
-        row.erase(row.begin() + weakest);
+    // Those that passed join best first. rows[c][j]: score against pool army j,
+    // kept in step with the pool as armies leave and join.
+    struct Passed {
+        int candidate;
+        std::vector<float> row;
+        double total = 0;
+    };
+    std::vector<Passed> passed;
+    for (int c : test.passed) {
+        Passed p{c, std::vector<float>(static_cast<std::size_t>(n), 0)};
+        for (std::size_t k = 0; k < opponents.size(); ++k) {
+            p.row[static_cast<std::size_t>(opponents[k])] = static_cast<float>(test.rows[static_cast<std::size_t>(c)][k]);
+            p.total += test.rows[static_cast<std::size_t>(c)][k];
+        }
+        result.best = std::max(result.best, p.total / n);
+        passed.push_back(std::move(p));
     }
-    entrant.origin = "pool " + std::to_string(pool.nextId++);
-    pool.add(std::move(entrant), row);
-    result.added = true;
+    std::stable_sort(passed.begin(), passed.end(), [](const Passed& a, const Passed& b) { return a.total > b.total; });
+    for (std::size_t i = 0; i < passed.size(); ++i) {
+        Passed& p = passed[i];
+        if (static_cast<int>(result.entries.size()) >= keep) {
+            ++result.left;
+            continue;
+        }
+        const int size = pool.size();
+        double score = 0;
+        for (float v : p.row) score += v;
+        score /= size;
+        if (!(score > options.minGain)) {  // the armies that joined before it beat it
+            ++result.belowBar;
+            continue;
+        }
+        // A copy: its results against the pool correlate with a pool army's.
+        double similar = -1;
+        if (size >= 3 && options.maxSimilar <= 1) {
+            for (int j = 0; j < size; ++j) {
+                const std::vector<float>& q = pool.payoff[static_cast<std::size_t>(j)];
+                double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+                for (int k = 0; k < size; ++k) {
+                    if (k == j) continue;
+                    const double x = p.row[static_cast<std::size_t>(k)], y = q[static_cast<std::size_t>(k)];
+                    sx += x, sy += y, sxx += x * x, syy += y * y, sxy += x * y;
+                }
+                const double m = size - 1;
+                const double vx = sxx - sx * sx / m, vy = syy - sy * sy / m;
+                if (vx > 1e-12 && vy > 1e-12) similar = std::max(similar, (sxy - sx * sy / m) / std::sqrt(vx * vy));
+            }
+            if (similar > options.maxSimilar) {
+                ++result.copies;
+                continue;
+            }
+        }
+        PoolEntry entry;
+        entry.score = score;
+        entry.similar = similar;
+        if (size >= pool.capacity) {
+            const int w = pool.weakest();
+            entry.removed = pool.armies[static_cast<std::size_t>(w)].origin;
+            pool.remove(w);
+            ++pool.replaced;
+            for (std::size_t r = i; r < passed.size(); ++r) passed[r].row.erase(passed[r].row.begin() + w);
+        }
+        Army entrant = *candidates[static_cast<std::size_t>(p.candidate)];
+        entrant.origin = entry.origin = "pool " + std::to_string(pool.nextId++);
+        pool.add(std::move(entrant), p.row);
+        result.entries.push_back(entry);
+
+        // The candidates still waiting play the new army.
+        if (static_cast<int>(result.entries.size()) < keep && i + 1 < passed.size()) {
+            const std::size_t rest = passed.size() - i - 1;
+            std::vector<double> scores(rest);
+            std::vector<MatchJob> jobs;
+            for (std::size_t r = 0; r < rest; ++r)
+                jobs.push_back({candidates[static_cast<std::size_t>(passed[i + 1 + r].candidate)], &pool.armies.back(),
+                                &scores[r], nullptr});
+            playJobs(arena, jobs, threads);
+            result.testMatches += static_cast<long long>(jobs.size());
+            for (std::size_t r = 0; r < rest; ++r) passed[i + 1 + r].row.push_back(static_cast<float>(scores[r]));
+        }
+    }
+    result.matches += result.testMatches;
     return result;
 }
 

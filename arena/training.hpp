@@ -165,41 +165,49 @@ struct PoolOptions {
     // 8, the better half of those up to 16 (the last entry replaces `sample`).
     // Empty: every candidate plays the whole sample.
     std::vector<int> halving;
-    // The entrance test: the best `finalists` new armies of the search play
-    // the pool armies in the same random order, a batch at a time (16 first,
-    // then 8 or a quarter of those played so far). After each batch a
-    // finalist drops out once we are `confidence` sure (one-sided, normal
-    // approximation with the finite-population correction) that its mean
-    // against the whole pool will end below the bar, or below the leading
-    // finalist's (paired on the same opponents). The last one left plays
-    // everyone; its exact mean decides.
-    int finalists = 4;
+    // The entrance test: every new army of the last search round plays the
+    // pool armies in the same random order, a batch at a time (16 first, then
+    // 8 or a quarter of those played so far). After each batch a candidate
+    // drops out once we are `confidence` sure (one-sided, normal approximation
+    // with the finite-population correction) that its mean against the whole
+    // pool will end below minGain, or that `maxEntrants` other candidates
+    // will end above it (paired on the same opponents). The rest play
+    // everyone, which gives their exact means.
     double confidence = 0.95;
-    double minGain = 0;  // while the pool is not full: the score needed to join
+    double minGain = 0;   // the score against the pool needed to join ("beats the pool")
+    int maxEntrants = 1;  // armies that may join per iteration
+    // A candidate whose results against the pool correlate above this with
+    // those of a pool army is a copy of it and does not join (> 1: no check).
+    double maxSimilar = 0.9;
+};
+
+struct PoolEntry {
+    std::string origin;   // "pool N"
+    double score = 0;     // exact mean against the pool it joined
+    double similar = 0;   // highest correlation with a pool army's results
+    std::string removed;  // origin of the army it replaced, if any
 };
 
 struct PoolResult {
-    double fitness = 0;    // best fitness in the last search round (on that round's sample)
-    double score = 0;      // the entrant's exact mean against the pool (without the army it would replace);
-                           // if every finalist dropped out: the best mean so far
-    double threshold = 0;  // what it had to beat: minGain, or the weakest army's exact score
-    bool added = false;
-    bool known = false;    // no new army among the search's best (all are pool armies already)
-    std::string removed;   // origin of the army it replaced, if any
+    double fitness = 0;  // best fitness in the last search round (on that round's sample)
+    double best = 0;     // best exact mean of a candidate (or best mean so far, if all dropped out)
+    int tested = 0;      // new armies that took the entrance test
+    int belowBar = 0;    // of which dropped out below minGain
+    int behind = 0;      // dropped out behind maxEntrants others
+    int copies = 0;      // passed, but too similar to a pool army
+    int left = 0;        // passed and not copies, but beyond maxEntrants
+    std::vector<PoolEntry> entries;
     long long matches = 0;      // battles in total
-    long long gateMatches = 0;  // of which in the entrance test
-    bool droppedOut = false;    // every finalist dropped out before playing everyone
-    int belowBar = 0;           // finalists that dropped out below the bar
-    int outraced = 0;           // finalists that dropped out behind another finalist
+    long long testMatches = 0;  // of which in the entrance test and with the new armies
 };
 
-// One iteration: an evolutionary search for an army that beats the pool,
+// One iteration: an evolutionary search for armies that beat the pool,
 // judged in every round against `sample` pool armies drawn anew at random (so
 // the candidates cannot specialise on a few opponents), then the entrance
-// test. While the pool is not full the entrant joins if its exact score
-// exceeds minGain; once full, it replaces the army with the lowest exact
-// score if it beats that army's score on the same opponents (the pool without
-// that army). Joined armies are appended with origin "pool N".
+// test. The armies that pass join one after another, best first, as long as
+// they still beat the pool (which now includes the ones before them) by
+// minGain and are not copies; once the pool is full each replaces the army
+// with the lowest exact score. They are appended with origin "pool N".
 using PoolProgress = std::function<void(int round, double best)>;
 PoolResult poolIteration(const Arena& arena, Pool& pool, const PoolOptions& options, Rng& rng, int threads,
                          const PoolProgress& progress = nullptr);
