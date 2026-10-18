@@ -278,6 +278,35 @@ Twin training answers "when is the league good enough?":
     --support 12 --pop 48 --gens 30 --max-hours 10
 ```
 
+### Pool training (`pool`, experimental)
+
+League training searches every new army against the few strongest armies of
+the Nash mixture (`--support`, 6 by default). The armies it finds beat those
+few, but carry over badly to armies they never met. `life_arena pool` keeps a
+pool of up to `--pool-size` armies (default 1000) without a payoff matrix:
+
+- Each iteration searches an army against `--sample` armies drawn at random
+  from the pool, drawn anew for every search generation, so it cannot
+  specialise on a few opponents.
+- The army's **score** is its mean against `--validate` freshly drawn pool
+  armies it was not selected on.
+- While the pool is not full, it joins if the score exceeds `--min-gain`.
+  Once full, it replaces the army with the lowest **current score** if it
+  beats that. The current score is the stored score minus (armies replaced
+  since it joined) / (3 × pool size): the pool gets stronger, so old scores
+  are worth less, and after one full turnover an army has lost 1/3.
+
+```bash
+./build/life_arena pool --league data/pool/open.txt --from assets/leagues/open-twins-260x128.txt \
+    --pool-size 1000 --pop 16 --gens 10 --sample 16 --validate 64 --max-hours 1
+```
+
+`--from` seeds a new pool with the armies of existing leagues (scored once at
+the start); running the same command again continues the pool. `FILE.state`
+keeps the scores, `FILE.csv` logs every iteration. `tools/heldout.py FILE`
+plays the pool's armies against the Nash mixture of an independently trained
+league (by default `assets/leagues/open-260x128.txt`).
+
 ### Battle logs and the result predictor (experimental)
 
 `train --log-matches P` records every battle (both armies, the score, and the

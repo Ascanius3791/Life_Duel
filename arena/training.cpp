@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <limits>
 #include <sstream>
@@ -256,6 +257,192 @@ std::vector<IterationResult> trainIteration(const std::vector<LeagueTrainer*>& l
     std::vector<IterationResult> results(leagues.size());
     parallelFor(n, std::min(n, threads), [&](int i) { results[i] = leagues[i]->finishIteration(); });
     return results;
+}
+
+// ---------------------------------------------------------------------------
+// Pool training
+// ---------------------------------------------------------------------------
+int Pool::weakest() const {
+    int w = -1;
+    for (int i = 0; i < size(); ++i)
+        if (w < 0 || score(i) < score(w)) w = i;
+    return w;
+}
+
+namespace {
+
+// `k` distinct pool indices other than `except`, uniformly at random (all of
+// them if there are fewer).
+std::vector<int> drawOpponents(int poolSize, int k, Rng& rng, int except = -1) {
+    std::vector<int> all;
+    for (int i = 0; i < poolSize; ++i)
+        if (i != except) all.push_back(i);
+    const int n = static_cast<int>(all.size());
+    k = std::min(k, n);
+    for (int i = 0; i < k; ++i)  // partial Fisher-Yates
+        std::swap(all[static_cast<std::size_t>(i)],
+                  all[static_cast<std::size_t>(std::uniform_int_distribution<int>(i, n - 1)(rng))]);
+    all.resize(static_cast<std::size_t>(k));
+    return all;
+}
+
+// Mean score of armies[a] against its opponents[a] (pool indices); one batch of battles.
+std::vector<double> meanScores(const Arena& arena, const std::vector<const Army*>& armies,
+                               const std::vector<std::vector<int>>& opponents, const Pool& pool, int threads,
+                               long long& matches) {
+    std::vector<std::vector<double>> scores(armies.size());
+    std::vector<MatchJob> jobs;
+    for (std::size_t a = 0; a < armies.size(); ++a) {
+        scores[a].resize(opponents[a].size());
+        for (std::size_t o = 0; o < opponents[a].size(); ++o)
+            jobs.push_back({armies[a], &pool.armies[static_cast<std::size_t>(opponents[a][o])], &scores[a][o], nullptr});
+    }
+    playJobs(arena, jobs, threads);
+    matches += static_cast<long long>(jobs.size());
+    std::vector<double> mean(armies.size(), 0);
+    for (std::size_t a = 0; a < armies.size(); ++a) {
+        for (double v : scores[a]) mean[a] += v;
+        mean[a] /= static_cast<double>(std::max<std::size_t>(1, scores[a].size()));
+    }
+    return mean;
+}
+
+}  // namespace
+
+long long scorePoolArmies(const Arena& arena, Pool& pool, const std::vector<int>& which, int validate, Rng& rng,
+                          int threads) {
+    std::vector<const Army*> armies;
+    std::vector<std::vector<int>> opponents;
+    for (int i : which) {
+        armies.push_back(&pool.armies[static_cast<std::size_t>(i)]);
+        opponents.push_back(drawOpponents(pool.size(), validate, rng, i));
+    }
+    long long matches = 0;
+    const std::vector<double> mean = meanScores(arena, armies, opponents, pool, threads, matches);
+    for (std::size_t k = 0; k < which.size(); ++k) {
+        pool.stored[static_cast<std::size_t>(which[k])] = mean[k];
+        pool.since[static_cast<std::size_t>(which[k])] = pool.replaced;
+    }
+    return matches;
+}
+
+PoolResult poolIteration(const Arena& arena, Pool& pool, const PoolOptions& options, Rng& rng, int threads,
+                         const PoolProgress& progress) {
+    PoolResult result;
+    if (pool.armies.empty()) {
+        pool.armies.push_back(arena.randomArmy(rng));
+        pool.stored.push_back(0);
+        pool.since.push_back(pool.replaced);
+    }
+    const int n = pool.size();
+    auto anyPool = [&]() -> const Army& {
+        return pool.armies[static_cast<std::size_t>(std::uniform_int_distribution<int>(0, n - 1)(rng))];
+    };
+
+    // Starting population: pool armies, mutations and crossovers of them, fresh random armies.
+    std::vector<Army> pop;
+    while (static_cast<int>(pop.size()) < options.population / 4) pop.push_back(anyPool());
+    while (static_cast<int>(pop.size()) < options.population) {
+        const int kind = std::uniform_int_distribution<int>(0, 9)(rng);
+        pop.push_back(kind < 5   ? arena.mutate(anyPool(), rng)
+                      : kind < 7 ? arena.mutate(arena.crossover(anyPool(), anyPool(), rng), rng)
+                                 : arena.randomArmy(rng));
+    }
+
+    // Every generation is judged on a new sample, the survivors included. With
+    // halving, candidates that look bad after a few battles stop early; the
+    // ranking puts those that got further first, then the higher mean.
+    const std::vector<int> stages = options.halving.empty() ? std::vector<int>{options.sample} : options.halving;
+    std::vector<double> fitness;
+    for (int gen = 1;; ++gen) {
+        const std::vector<int> sample = drawOpponents(n, stages.back(), rng);
+        const std::size_t m = pop.size();
+        std::vector<double> sum(m, 0);
+        std::vector<int> played(m, 0), reached(m, 0);
+        std::vector<int> alive(m);
+        for (std::size_t i = 0; i < m; ++i) alive[i] = static_cast<int>(i);
+        int done = 0;
+        for (std::size_t s = 0; s < stages.size(); ++s) {
+            const int upto = std::min(stages[s], static_cast<int>(sample.size()));
+            const std::vector<int> chunk(sample.begin() + done, sample.begin() + upto);
+            std::vector<const Army*> armies;
+            for (int a : alive) armies.push_back(&pop[static_cast<std::size_t>(a)]);
+            const std::vector<double> mean = meanScores(arena, armies, std::vector<std::vector<int>>(alive.size(), chunk),
+                                                        pool, threads, result.matches);
+            for (std::size_t k = 0; k < alive.size(); ++k) {
+                const auto a = static_cast<std::size_t>(alive[k]);
+                sum[a] += mean[k] * static_cast<double>(chunk.size());
+                played[a] = upto;
+                reached[a] = static_cast<int>(s);
+            }
+            done = upto;
+            if (s + 1 < stages.size()) {
+                std::stable_sort(alive.begin(), alive.end(), [&](int a, int b) { return sum[a] > sum[b]; });
+                alive.resize(std::max<std::size_t>(1, alive.size() / 2));
+            }
+        }
+        fitness.assign(m, 0);
+        for (std::size_t i = 0; i < m; ++i) fitness[i] = played[i] ? sum[i] / played[i] : 0;
+        std::vector<int> order(m);
+        for (std::size_t i = 0; i < m; ++i) order[i] = static_cast<int>(i);
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+            return reached[a] != reached[b] ? reached[a] > reached[b] : fitness[a] > fitness[b];
+        });
+        std::vector<Army> sorted;
+        std::vector<double> sortedFitness;
+        for (int i : order) sorted.push_back(std::move(pop[static_cast<std::size_t>(i)])), sortedFitness.push_back(fitness[i]);
+        pop = std::move(sorted);
+        fitness = std::move(sortedFitness);
+        if (progress) progress(gen, fitness[0]);
+        if (gen == options.generations) break;
+
+        // Next generation: keep the best quarter, breed the rest by tournament selection.
+        const int elite = std::max(1, options.population / 4);
+        auto tournament = [&]() -> const Army& {
+            int best = std::uniform_int_distribution<int>(0, static_cast<int>(pop.size()) - 1)(rng);
+            for (int r = 0; r < 2; ++r)
+                best = std::min(best, std::uniform_int_distribution<int>(0, static_cast<int>(pop.size()) - 1)(rng));
+            return pop[static_cast<std::size_t>(best)];
+        };
+        std::vector<Army> next(pop.begin(), pop.begin() + elite);
+        while (static_cast<int>(next.size()) < options.population) {
+            const int kind = std::uniform_int_distribution<int>(0, 9)(rng);
+            next.push_back(kind < 3   ? arena.mutate(arena.crossover(tournament(), tournament(), rng), rng)
+                           : kind < 9 ? arena.mutate(tournament(), rng)
+                                      : arena.randomArmy(rng));
+        }
+        pop = std::move(next);
+    }
+    result.fitness = fitness[0];
+
+    const Army& best = pop[0];
+    const std::string key = armyKey(arena, best);
+    result.known = std::any_of(pool.armies.begin(), pool.armies.end(),
+                               [&](const Army& a) { return armyKey(arena, a) == key; });
+    if (result.known) return result;  // a pool army won the search: nothing new
+
+    // Its score: the mean against opponents it was not selected on.
+    result.validation =
+        meanScores(arena, {&best}, {drawOpponents(n, options.validate, rng)}, pool, threads, result.matches)[0];
+    const bool full = pool.size() >= pool.capacity;
+    const int weakest = full ? pool.weakest() : -1;
+    result.threshold = full ? pool.score(weakest) : options.minGain;
+    if (!(result.validation > result.threshold)) return result;
+
+    if (full) {
+        const auto at = static_cast<std::ptrdiff_t>(weakest);
+        result.removed = pool.armies[static_cast<std::size_t>(weakest)].origin;
+        pool.armies.erase(pool.armies.begin() + at);
+        pool.stored.erase(pool.stored.begin() + at);
+        pool.since.erase(pool.since.begin() + at);
+        ++pool.replaced;
+    }
+    pool.armies.push_back(best);
+    pool.armies.back().origin = "pool " + std::to_string(pool.nextId++);
+    pool.stored.push_back(result.validation);
+    pool.since.push_back(pool.replaced);
+    result.added = true;
+    return result;
 }
 
 // ---------------------------------------------------------------------------
