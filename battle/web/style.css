@@ -261,6 +261,14 @@ body.battle .drawer, body.battle .drawer-tab { display: none; }
 .preset-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bot-prep { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
 #botSelect { width: auto; max-width: 220px; min-width: 0; }
+.level-prep { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+#levelSelect { width: auto; max-width: 280px; min-width: 0; }
+/* Solo: no Blue, the right-hand score counts the grey cells */
+body.solo .score.blue .spark { display: none; }
+body.solo .score.blue .label { color: var(--grey); }
+body.solo .score.blue .value { text-shadow: none; }
+body.solo .tug-blue { background: var(--grey); box-shadow: none; }
+body.solo .legend .b { display: none; }
 .lock-chip {
   white-space: nowrap; padding: 5px 10px; border-radius: 8px; font-size: 13px;
   background: var(--bg-2); border: 1px dashed var(--border-2); color: #c9cfdd;
@@ -409,7 +417,7 @@ dialog h3 { margin: 0; }
 @media (max-width: 1100px) {
   .controlbar, .bar-section { flex-wrap: wrap; }
   .preset-desc { display: none; }
-  .bot-prep, .online-prep { flex-wrap: wrap; }
+  .bot-prep, .level-prep, .online-prep { flex-wrap: wrap; }
   .speed { grid-template-columns: 70px minmax(160px, 1fr); }
   .scoreboard { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; padding: 6px 10px 2px; }
   .score .sub, .score .spark { display: none !important; }

@@ -41,6 +41,9 @@ struct BattleConfig {
     // right one) do not count for the score that decides a generation limit or
     // a repetition. Elimination still looks at every cell.
     bool ignoreHome = false;
+    // Red plays alone (the Solo mode): Blue has no army, so only Red being
+    // wiped out ends the battle early. The score is then Red's counted cells.
+    bool solo = false;
 };
 
 // Number of recent boards a battle remembers to detect repetition. Any cycle

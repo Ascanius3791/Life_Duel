@@ -456,7 +456,7 @@ void FastBattle::checkEnd() {
     redScore_ = red_ - redHome_;
     blueScore_ = blue_ - blueHome_;
 
-    if (red_ == 0 || blue_ == 0) {
+    if (red_ == 0 || (blue_ == 0 && !config_.solo)) {
         reason_ = EndReason::Elimination;
         winner_ = red_ > 0 ? Winner::Red : blue_ > 0 ? Winner::Blue : Winner::Draw;
         return;

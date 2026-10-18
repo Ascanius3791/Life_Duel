@@ -157,6 +157,7 @@ generations. In vs Bot and Watch mode both settings can still be changed.
 | Fold / unfold the arsenal | `A`, the » / « button, or the tab at the board edge |
 | Focus mode (once both armies are ready) | **⛶ Focus** or `F`: the board fills the screen, controls fade out while the mouse rests. `Esc` leaves it |
 | Play against the bot | **vs Bot** at the top left: pick your side, the battlefield is the one the bot was trained for |
+| Play alone | **Solo**: Red alone against a level's grey cells, score = red cells outside your area at the end. **Challenge**: beat a level's fixed bot with as few cells as you can. Both always run to the end (no limit) and home cells never count |
 | Rules | `H` |
 
 ---

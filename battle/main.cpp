@@ -253,10 +253,11 @@ int main(int argc, char** argv) {
     server.route("POST", "/api/battle", [&](const Request& r) {
         // maxgen=0: no limit, only elimination or repetition ends the battle.
         // home=0: cells in their own starting area do not count for the score.
+        // solo=1: Red plays alone (Solo mode), Blue's absence ends nothing.
         const gol::BattleConfig cfg = duel::battleConfig(
             static_cast<int>(r.intParam("w", 260, 50, 1000)), static_cast<int>(r.intParam("h", 128, 20, 600)),
             static_cast<int>(r.intParam("maxgen", 2000, 0, 10000000)), r.param("variant"),
-            r.intParam("home", 1, 0, 1) == 0);
+            r.intParam("home", 1, 0, 1) == 0, r.intParam("solo", 0, 0, 1) == 1);
         std::vector<std::uint8_t> cells(static_cast<std::size_t>(cfg.width) * cfg.height);
         if (!gol::decodeBoard(r.body, cells)) return Response::error(400, "board does not match the size");
         auto session = std::make_shared<Session>(gol::Battle(cfg, std::move(cells)));

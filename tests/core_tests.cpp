@@ -209,6 +209,34 @@ static void testBattle() {
         CHECK(alone.finished() && alone.endReason() == EndReason::Elimination && alone.winner() == Winner::Red);
     }
 
+    // Solo: Red alone is no elimination; the battle runs to the limit and Red's
+    // counted cells are the score. Red dying out is a draw at 0.
+    {
+        BattleConfig c6{50, 20, Variant::BirthOnly, 30};
+        c6.ignoreHome = true;
+        c6.solo = true;
+        auto cells = board(50, 20, {{2, 2, Red}, {3, 2, Red}, {2, 3, Red}, {3, 3, Red},
+                                    {30, 5, Grey}, {31, 5, Grey}, {30, 6, Grey}, {31, 6, Grey}});
+        const Pattern& glider = *findPattern("glider");
+        for (auto p : glider.cells) cells[static_cast<std::size_t>(8 + p.y) * 50 + 12 + p.x] = Red;
+        Battle b(c6, cells);
+        CHECK(!b.finished());
+        b.runToEnd();
+        CHECK(b.endReason() == EndReason::GenerationLimit && b.generation() == 30);
+        CHECK(b.winner() == Winner::Red && b.redScore() == 5 && b.blueScore() == 0);
+        // Without a limit (as the Solo and Challenge modes play) it runs until the
+        // glider has crashed into the dead edge and the board repeats.
+        c6.maxGenerations = 0;
+        Battle endless(c6, cells);
+        endless.advance(100000);
+        CHECK(endless.finished() && endless.endReason() == EndReason::Repetition && endless.generation() > 30);
+        CHECK(endless.redHome() == 4 && endless.winner() == (endless.redScore() > 0 ? Winner::Red : Winner::Draw));
+        Battle lone(c6, board(50, 20, {{20, 5, Red}}));
+        CHECK(!lone.finished());
+        lone.step();
+        CHECK(lone.finished() && lone.endReason() == EndReason::Elimination && lone.winner() == Winner::Draw);
+    }
+
     // Board encoding round trip.
     {
         auto cells = board(7, 3, {{0, 0, Red}, {1, 0, Red}, {6, 2, Grey}, {3, 1, Blue}});
@@ -293,6 +321,13 @@ static void testFastBattle() {
             for (const int density : {15, 40})
                 for (const bool ignoreHome : {false, true})
                     mismatches += !sameAsReference({w, 37, v, 400, ignoreHome}, soup(w, 37, density), "soup");
+    // Solo: red and grey only, Blue's absence ends nothing.
+    for (const int w : {64, 130})
+        for (const Variant v : {Variant::BirthOnly, Variant::Contagion}) {
+            auto cells = soup(w, 37, 30);
+            for (auto& c : cells) c = c == Blue ? std::uint8_t{Red} : c;
+            mismatches += !sameAsReference({w, 37, v, w == 64 ? 0 : 400, true, true}, cells, "solo");
+        }
     for (const int h : {1, 2, 3, 4, 5, 8, 9, 300})
         for (const Variant v : {Variant::BirthOnly, Variant::Contagion})
             mismatches += !sameAsReference({70, h, v, 300}, soup(70, h, 30), "height");

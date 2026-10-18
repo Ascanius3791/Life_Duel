@@ -35,12 +35,13 @@ const S = {
   battle: null,
   speed: 30,
   dirty: true,
-  mode: 'duo',          // 'duo': two players at one screen | 'bot': one player against a trained bot | 'watch': two armies of a league | 'online': see online.js
+  mode: 'duo',          // 'duo': two players at one screen | 'bot': one player against a trained bot | 'watch': two armies of a league | 'online': see online.js | 'solo', 'challenge': see levels.js
   bots: [],             // leagues the server offers: [{ id }]
   // limit: what vs Bot and Watch may change of the league's rules (generation limit, home cells).
   bot: { id: null, league: null, side: 'blue', level: 'hard', army: null, limit: { unlimited: true, ignoreHome: true } },
   watch: { pick: { red: 'nash', blue: 'nash' }, shown: { red: null, blue: null } },
-  duo: null,            // the two-player settings, kept aside while vs Bot or online mode replaces them
+  level: { id: null },  // Solo and Challenge: the level being played
+  duo: null,            // the two-player settings, kept aside while another mode replaces them
 };
 
 function newSeed() { return Math.floor(Math.random() * 1e9); }
@@ -57,6 +58,7 @@ function loadPrefs() {
     if (p.speed) S.speed = p.speed;
     if (p.watch) for (const o of ['red', 'blue']) if (typeof p.watch[o] === 'string') S.watch.pick[o] = p.watch[o];
     if (p.mode) S.mode = p.mode;
+    if (p.level && typeof p.level.id === 'string') S.level.id = p.level.id;
     if (p.bot) Object.assign(S.bot, { id: current ? p.bot.id : null, side: p.bot.side === 'red' ? 'red' : 'blue', level: p.bot.level === 'easy' ? 'easy' : 'hard' });
     if (current && p.bot && p.bot.limit) {
       S.bot.limit = { maxGen: +p.bot.limit.maxGen || 2000, unlimited: !!p.bot.limit.unlimited, ignoreHome: p.bot.limit.ignoreHome !== false };
@@ -64,12 +66,13 @@ function loadPrefs() {
   } catch { /* storage unavailable */ }
 }
 function savePrefs() {
-  // In vs Bot mode the league dictates the settings; the two-player ones are what is worth keeping.
+  // In vs Bot mode the league (in Solo and Challenge the level) dictates the settings; the two-player ones are what is worth keeping.
   const { settings, field } = S.mode !== 'duo' && S.duo ? S.duo : S;
   try {
     localStorage.setItem('lifeDuel.prefs', JSON.stringify({
       v: PREFS_VERSION, settings, field: { preset: field.preset, count: field.count }, speed: S.speed,
       mode: S.mode === 'online' ? 'duo' : S.mode, watch: S.watch.pick, bot: { id: S.bot.id, side: S.bot.side, level: S.bot.level, limit: S.bot.limit },
+      level: { id: S.level.id },
     }));
   } catch { /* storage unavailable */ }
 }
@@ -483,7 +486,7 @@ function updateSides() {
     tab.disabled = !active;
     // The bot has no arsenal to open, and its tab would cover the human's zone.
     tab.hidden = isBot(owner) || isRemote(owner);
-    $('.tab-label', tab).textContent = S.mode === 'bot' || S.mode === 'online' ? `${cap(owner)} · you` : cap(owner);
+    $('.tab-label', tab).textContent = S.mode === 'bot' || S.mode === 'online' || isLevelMode() ? `${cap(owner)} · you` : cap(owner);
     $('.tab-state', tab).textContent = S.ready[owner] ? 'ready ✓' : (active ? 'arsenal' : 'waiting');
     tab.title = active ? `Open ${cap(owner)}'s arsenal (A)` : (S.ready[owner] ? `${cap(owner)} is ready` : `${cap(owner)} places after ${owner === 'red' ? 'Blue' : 'Red'}`);
     for (const card of $$('.card', side)) {
@@ -518,8 +521,12 @@ function updatePhaseLabel() {
     if (!b) return;
     const f = b.frame;
     if (f.finished) {
+      if (S.mode === 'solo') {
+        el.innerHTML = `Battle over — score ${soloScore(f.redScore)}`;
+        return;
+      }
       const who = S.mode === 'watch' && f.winner !== 'draw' ? ` (${watchLabel(f.winner)})`
-        : S.mode === 'bot' && f.winner !== 'draw' ? (isBot(f.winner) ? ' (the bot)' : ' (you)')
+        : (S.mode === 'bot' || S.mode === 'challenge') && f.winner !== 'draw' ? (isBot(f.winner) ? ' (the bot)' : ' (you)')
         : S.mode === 'online' && f.winner !== 'draw' ? (isRemote(f.winner) ? ' (your friend)' : ' (you)') : '';
       el.innerHTML = f.winner === 'draw' ? 'Battle over — draw' : `Battle over — ${f.winner === 'red' ? R : B}${who} wins`;
     } else {
@@ -533,6 +540,10 @@ function updatePhaseLabel() {
   }
   if (S.mode === 'watch') {
     el.innerHTML = `Watch: pick the ${R} and ${B} armies (◀ ▶ cycles), then start the battle`;
+    return;
+  }
+  if (isLevelMode()) {
+    el.innerHTML = levelPhaseLabel();
     return;
   }
   if (S.mode === 'bot') {
@@ -658,6 +669,7 @@ function resetPreparation({ clearArmies }) {
     S.open = null;
     watchFill(clearArmies);
   }
+  if (isLevelMode()) levelFill();
   if (S.mode === 'online') onlineResetPreparation();
   document.body.classList.remove('battle');
   $('#centerPrep').hidden = false;
@@ -793,7 +805,7 @@ async function loadBattlefield() {
   try {
     const data = await api(`/api/battlefield?w=${w}&h=${h}&preset=${encodeURIComponent(preset)}&count=${count}&seed=${seed}`);
     if (ticket !== fieldRequest) return;
-    S.grey = decodeBoard(data.board, w * h);
+    S.grey = levelGrey(decodeBoard(data.board, w * h));
     boardChanged();
     onlineFieldLoaded();
   } catch (err) {
@@ -851,14 +863,19 @@ function updateScoreboard() {
     const board = prepBoard();
     red = blue = grey = 0;
     for (const v of board) { red += v === RED; blue += v === BLUE; grey += v === GREY; }
-    redSub = isHidden('red') || S.mode === 'watch' ? '' : `${remaining('red')} pts left`;
-    blueSub = isHidden('blue') || S.mode === 'watch' ? '' : `${remaining('blue')} pts left`;
+    redSub = isHidden('red') || S.mode === 'watch' ? '' : `${isLevelMode() ? `${fmt(red)} cells · ` : ''}${remaining('red')} pts left`;
+    blueSub = isHidden('blue') || S.mode === 'watch' || isLevelMode() ? '' : `${remaining('blue')} pts left`;
     $('#genLabel').textContent = 'Preparation';
     $('#genProgress').style.width = '0%';
     $('#genProgressBar').classList.remove('endless');
     $('#genMark').hidden = true;
     $('#rateLabel').textContent = (S.settings.unlimited ? 'no generation limit' : `limit ${fmt(S.settings.maxGen)} gens`) +
       (S.settings.ignoreHome ? ' · home cells don\'t count' : '');
+  }
+  if (S.mode === 'solo') {
+    // No Blue: the right-hand score shows the grey cells, the bar red against grey.
+    blue = grey;
+    blueSub = '';
   }
   const showRed = !isHidden('red'), showBlue = !isHidden('blue');
   $('#scoreRed').textContent = showRed ? fmt(red) : '?';
@@ -922,7 +939,8 @@ async function startBattle(encoded) {
   const extra = botArmy ? botPlacements(botArmy[S.bot.side], S.bot.side) : S.mode === 'online' ? onlineOpponentPlacements() : [];
   const body = encoded || encodeBoard(prepBoard(extra));
   try {
-    const frame = await api(`/api/battle?w=${w}&h=${h}&maxgen=${unlimited ? 0 : maxGen}&variant=${variant}&home=${ignoreHome ? 0 : 1}`, { method: 'POST', body });
+    const solo = S.mode === 'solo' ? '&solo=1' : '';
+    const frame = await api(`/api/battle?w=${w}&h=${h}&maxgen=${unlimited ? 0 : maxGen}&variant=${variant}&home=${ignoreHome ? 0 : 1}${solo}`, { method: 'POST', body });
     S.drag = null;
     S.phase = 'battle';
     S.turn = 'done';
@@ -934,6 +952,7 @@ async function startBattle(encoded) {
       pending: null, skipping: false, resultShown: false,
       live: { red: [], blue: [] }, rate: [], botArmy, mark: trainedMark(),
       watch: S.mode === 'watch' ? { ...S.watch.shown } : null,
+      level: isLevelMode() ? { mode: S.mode, id: currentLevel().id, run: levelRun() } : null,
     };
     updateBotInfo();
     if (S.mode === 'online' && !encoded) onlineBattleStarted(body);
@@ -1174,7 +1193,7 @@ function showResult(frame) {
   const banner = $('#resultBanner');
   banner.className = `result-banner ${frame.winner}`;
   banner.textContent = frame.winner === 'draw' ? 'Draw'
-    : S.mode === 'bot' ? (isBot(frame.winner) ? 'The bot wins' : 'You win!') : `${cap(frame.winner)} wins!`;
+    : S.mode === 'bot' || S.mode === 'challenge' ? (isBot(frame.winner) ? 'The bot wins' : 'You win!') : `${cap(frame.winner)} wins!`;
   const loser = frame.winner === 'red' ? 'Blue' : 'Red';
   let reason = '';
   const c = counted(frame);
@@ -1203,6 +1222,8 @@ function showResult(frame) {
     $('#resultBot').hidden = false;
     $('#resultBot').textContent = `Red: ${watched.red.long} · Blue: ${watched.blue.long}`;
   }
+  $('#resultLevel').hidden = true;
+  if (S.battle && S.battle.level) levelResult(frame);
   onlineDecorateResult(frame);
   $('#resultDialog').showModal();
   drawResultChart(frame.history, m && m.reached ? m.gen : 0);
@@ -1262,7 +1283,7 @@ function drawResultChart(history, markGen) {
   plot(history.grey, 'rgba(141,150,168,0.8)', 1.5, [4, 3]);
   g.restore();
   plot(history.red, COLOR.red, 2, []);
-  plot(history.blue, COLOR.blue, 2, []);
+  if (S.mode !== 'solo') plot(history.blue, COLOR.blue, 2, []);
   if (markGen && markGen < lastGen) {
     const x = pad.l + (markGen / lastGen) * (w - pad.l - pad.r);
     g.strokeStyle = 'rgba(232,236,245,0.55)';
@@ -1281,16 +1302,18 @@ function drawResultChart(history, markGen) {
 // ---------------------------------------------------------------------------
 function openSettings() {
   const s = S.settings;
-  const locked = S.mode === 'bot' || S.mode === 'watch';
+  const locked = S.mode === 'bot' || S.mode === 'watch' || isLevelMode();
   const sizes = S.config.sizes.slice();
   if (!sizes.some(z => z.id === s.sizeId)) sizes.push({ id: s.sizeId, name: `${s.w} x ${s.h}` });
   $('#setSize').innerHTML = sizes.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
   // vs Bot: the league fixes everything but the generation limit and the home cell rule.
   for (const el of $$('#settingsForm input, #settingsForm select')) el.disabled = locked;
-  $('#setUnlimited').disabled = false;
-  $('#setIgnoreHome').disabled = false;
+  $('#setUnlimited').disabled = isLevelMode();
+  $('#setIgnoreHome').disabled = isLevelMode();
   $('#settingsLock').hidden = !locked;
-  if (locked) {
+  if (isLevelMode()) {
+    $('#settingsLock').textContent = `🔒 ${cap(S.mode)}: the level fixes every setting, so that records stay comparable.`;
+  } else if (locked) {
     const t = S.bot.league.settings.maxGenerations;
     $('#settingsLock').textContent = '🔒 League battlefield: only the generation limit and whether home cells count can be changed; the rest is fixed to what the bot was trained with.' +
       (t ? ` It was trained with a limit of ${fmt(t)} generations — beyond that it plays on, but was never judged there.` : '') +
@@ -1300,7 +1323,7 @@ function openSettings() {
   $('#setBudget').value = s.budget;
   $('#setMaxGen').value = s.maxGen;
   $('#setUnlimited').checked = s.unlimited;
-  $('#setMaxGen').disabled = s.unlimited;
+  $('#setMaxGen').disabled = s.unlimited || isLevelMode();
   $('#setIgnoreHome').checked = !!s.ignoreHome;
   $('#setBlind').checked = s.blind;
   for (const r of $$('input[name=variant]')) r.checked = r.value === s.variant;
@@ -1318,6 +1341,7 @@ function readLimit() {
 
 function applySettings() {
   if (S.mode === 'online' && !onlineMayEditSettings()) return;
+  if (isLevelMode()) return;
   const s = S.settings;
   if (S.mode === 'bot' || S.mode === 'watch') {
     S.bot.limit = readLimit();
@@ -1364,7 +1388,8 @@ function applySettings() {
 // unchanged. The bot draws its army before the human places anything and keeps
 // it hidden until the battle starts, exactly like a blind human opponent.
 // ---------------------------------------------------------------------------
-function isBot(owner) { return S.mode === 'watch' || (S.mode === 'bot' && owner === S.bot.side); }
+// In Solo and Challenge, Blue is never a player: absent, or the level's fixed bot army.
+function isBot(owner) { return S.mode === 'watch' || (S.mode === 'bot' && owner === S.bot.side) || (isLevelMode() && owner === 'blue'); }
 function humanSide() { return S.bot.side === 'red' ? 'blue' : 'red'; }
 
 // The generation limit the bot was trained with, when the player has chosen to
@@ -1495,6 +1520,7 @@ async function setMode(mode) {
     if (!(await useBot(S.bot.id, mode)) && wasOnline) await rebuildBoard();
     return;
   }
+  if (isLevelMode(mode)) return useLevel(S.level.id, mode);
   if (S.duo) {
     Object.assign(S.settings, S.duo.settings);
     S.field = { ...S.duo.field };
@@ -1537,18 +1563,22 @@ function setBotLevel(level) {
 }
 
 function updateModeUi() {
-  const bot = S.mode === 'bot', watch = S.mode === 'watch';
+  const bot = S.mode === 'bot', watch = S.mode === 'watch', level = isLevelMode();
   $('#modeSwitch').hidden = false;
   $('#modeSwitch [data-mode=bot]').hidden = !S.bots.length;
   $('#modeSwitch [data-mode=watch]').hidden = !S.bots.length;
   for (const b of $$('#modeSwitch button')) b.classList.toggle('on', b.dataset.mode === S.mode);
-  for (const sel of ['#presetSelect', '#btnReroll', '#countRow', '#presetDesc']) $(sel).hidden = bot || watch;
+  for (const sel of ['#presetSelect', '#btnReroll', '#countRow', '#presetDesc']) $(sel).hidden = bot || watch || level;
   $('#botPrep').hidden = !bot;
   $('#watchPrep').hidden = !watch;
+  $('#levelPrep').hidden = !level;
+  document.body.classList.toggle('solo', S.mode === 'solo');
   for (const owner of ['red', 'blue']) {
-    $(`.score.${owner} .label`).textContent = bot ? `${cap(owner)} · ${isBot(owner) ? 'bot' : 'you'}` : cap(owner);
+    $(`.score.${owner} .label`).textContent = bot || S.mode === 'challenge' ? `${cap(owner)} · ${isBot(owner) ? 'bot' : 'you'}`
+      : S.mode === 'solo' ? (owner === 'red' ? 'Red' : 'Grey') : cap(owner);
   }
   updateOnlineUi();
+  updateLevelUi();
   if (!bot && !watch) return;
   const s = S.settings;
   const preset = S.config.presets.find(p => p.id === S.field.preset);
@@ -1583,7 +1613,12 @@ function leagueFieldTitle(s) {
 function updateBotInfo() {
   const army = S.battle && S.battle.botArmy;
   const watched = S.battle && S.battle.watch;
-  $('#botInfo').hidden = !army && !watched;
+  const level = S.battle && S.battle.level && LEVELS.find(l => l.id === S.battle.level.id);
+  $('#botInfo').hidden = !army && !watched && !level;
+  if (level) {
+    $('#botInfo').textContent = S.battle.level.mode === 'solo' ? `Solo · ${level.name}` : `Challenge · ${level.name}`;
+    $('#botInfo').title = S.battle.level.mode === 'solo' ? level.solo.text : `The bot plays ${level.challenge.botName}.`;
+  }
   if (army) {
     $('#botInfo').textContent = `Bot: army #${army.id} · ${army.origin}`;
     $('#botInfo').title = `The bot played ${botArmyText(army)}.`;
@@ -1766,7 +1801,7 @@ function armIdle() {
 function newGame() {
   if (S.mode === 'online') return onlineNewGame();
   if (S.battle) S.battle = null;
-  if (S.mode !== 'bot' && S.mode !== 'watch' && ['random', 'random_mirror', 'random_rotational', 'reactor'].includes(S.field.preset)) {
+  if (S.mode !== 'bot' && S.mode !== 'watch' && !isLevelMode() && ['random', 'random_mirror', 'random_rotational', 'reactor'].includes(S.field.preset)) {
     S.field.seed = newSeed();
     loadBattlefield();
   }
@@ -1842,6 +1877,7 @@ function wire() {
   }
   wireOnline();
   wireArmies();
+  wireLevels();
 
   new ResizeObserver(() => {
     resize();
@@ -1904,13 +1940,14 @@ async function init() {
   buildCards();
   wire();
   initSpeedDial();
-  const startMode = (S.mode === 'bot' || S.mode === 'watch') && S.bots.length > 0 ? S.mode : null;
+  const startMode = (S.mode === 'bot' || S.mode === 'watch') && S.bots.length > 0 || isLevelMode() ? S.mode : null;
   S.mode = 'duo';
   updateModeUi();
   syncFieldControls();
   resize();
   resetPreparation({ clearArmies: true });
-  if (!startMode || !(await useBot(S.bot.id, startMode))) await loadBattlefield();
+  if (isLevelMode(startMode)) await useLevel(S.level.id, startMode);
+  else if (!startMode || !(await useBot(S.bot.id, startMode))) await loadBattlefield();
   requestAnimationFrame(tick);
   onlineJoinFromLink();
 

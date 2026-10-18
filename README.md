@@ -86,6 +86,35 @@ army of the league (Nash support first), your saved armies and the published
 ones. **◀ ▶** step through them, 🎲 draws again, 💾 keeps the army on the board
 in your saved armies. **New game** draws the random sides again.
 
+### Solo and Challenge
+
+Two one-player modes on fixed **levels**: *Hive lattice*, *No man's land* and
+*Champion*, all on the board of the bot leagues (260×128, 120 points,
+Birthright). Every battle runs to its end with **no generation limit** (until
+the board repeats or an army dies out) and **home cells never count**; nothing
+can be changed, so records stay comparable. Your best result per level is kept
+in this browser and shown in the level list; **Best army** puts the army of
+your record back on the board.
+
+- **Solo**: Red plays alone, there is no Blue. The score is the number of red
+  cells **outside your own area** when the board starts repeating (the average
+  over the cycle; 0 if Red dies out). Grey cells never change colour under
+  Birthright, red grows by births next to them, so red cells are what counts.
+  On *No man's land* there is no grey at all: the task is plain growth. On
+  *Champion* the strongest army of our pool training on that field
+  (`data/pool/n100m.txt`, not in the repository; best against the open
+  league's Nash mixture) stands in grey where Blue's army would be, and flies
+  at you.
+- **Challenge**: Red against a fixed, visible bot army. Win, and the record is
+  the **fewest living red cells** on the starting board that still won (points
+  spent break ties). The bots: the army with the largest Nash weight of the
+  Hive league and of the open league, and on *Champion* the champion itself
+  (they were trained with a 2000 generation limit and all cells counted).
+
+New levels are entries of `LEVELS` in `battle/web/levels.js` (armies written as
+in a league file). The battle runs with `solo=1` (see the API below), so a board
+without Blue is no elimination.
+
 ### Saved and published armies
 
 Each arsenal has **Save** and **Load**. Saved armies have a name and stay in
@@ -349,6 +378,7 @@ battle/     life_battle: HTTP server + JSON API (api_json.* is shared with the W
   web/        index.html, style.css, app.js (no build step; PeerJS is loaded from a CDN for online play)
     online.js         online play: PeerJS connection, commit-reveal, checksums, rematch
     armies.js         saved armies (names, IDs, army codes) and publishing through GitHub issues
+    levels.js         Solo and Challenge: the levels and the records
     static-backend.js, engine-worker.js   the /api/ calls answered in the browser (static site only)
 tools/      build_site.sh: WebAssembly build + static site in dist/
 .github/workflows/pages.yml   CI: native build + tests, static site, GitHub Pages deploy
@@ -363,7 +393,7 @@ assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mo
 |---|---|
 | `GET /api/config` | arsenal (patterns + costs), battlefield presets, board sizes |
 | `GET /api/battlefield?w&h&preset&count&seed` | generated grey battlefield |
-| `POST /api/battle?w&h&maxgen&variant&home` (body = board) | start a battle, returns the first frame (`maxgen=0`: no limit; `home=0`: cells in their own starting area don't count, the frames then also carry `redHome`/`blueHome`) |
+| `POST /api/battle?w&h&maxgen&variant&home&solo` (body = board) | start a battle, returns the first frame (`maxgen=0`: no limit; `home=0`: cells in their own starting area don't count, the frames then also carry `redHome`/`blueHome`; `solo=1`: Red plays alone, only Red dying out ends the battle early) |
 | `GET /api/step?id&n=K` or `&ms=T` | advance K generations, or as many as fit into T ms; `board=0` omits the board |
 | `GET /api/bots` | the bot leagues on offer: `{"bots":[{"id"}]}` |
 | `GET /api/bot?id` | that league's JSON export, verbatim (settings, armies with Nash weights and red/blue placements) |

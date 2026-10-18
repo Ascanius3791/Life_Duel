@@ -1,4 +1,4 @@
-# Browser test of the local modes (2 players, vs Bot) against a running
+# Browser test of the local modes (2 players, vs Bot, Solo, Challenge) against a running
 # Life Duel: the C++ server or the static site. Needs Playwright with Chromium
 # (pip install playwright && python3 -m playwright install chromium).
 #
@@ -62,5 +62,56 @@ with sync_playwright() as p:
     page.click('#btnStart')
     page.wait_for_function("S.battle && S.phase === 'battle'")
     print('vs Bot:', finish(page), page.evaluate("$('#resultBot').textContent"))
+    page.click('#btnResultView')
+
+    # Solo: Red alone on every level; the score is Red's counted cells.
+    page.evaluate("localStorage.removeItem('lifeDuel.levels')")
+    page.click('#modeSwitch [data-mode=solo]')
+    page.wait_for_function("S.mode === 'solo' && S.grey", timeout=20000)
+    for level in page.evaluate("levelsFor('solo').map(l => l.id)"):
+        page.select_option('#levelSelect', level)
+        page.wait_for_function(f"S.level.id === '{level}' && S.grey && S.phase === 'prep'")
+        grey = page.evaluate("S.grey.reduce((n, v) => n + (v === GREY), 0)")
+        page.evaluate(PLACE, 'red'); page.evaluate("setReady('red')")
+        page.click('#btnStart')
+        page.wait_for_function("S.battle && S.phase === 'battle'")
+        r = finish(page)
+        assert r['reason'] != 'elimination' or r['gen'] > 0, r  # no Blue is no elimination
+        assert page.evaluate("S.battle.frame.maxGen === 0 && S.battle.frame.redHome != null")  # no limit, home cells don't count
+        score = page.evaluate("S.battle.frame.redScore")
+        print(f'Solo {level}: {grey} grey ->', r, 'score', score, '|', page.evaluate("$('#resultLevel').textContent"))
+        page.click('#btnResultEdit')
+    records = page.evaluate("JSON.parse(localStorage.getItem('lifeDuel.levels') || '{}')")
+    print('Solo records:', {k: v['score'] for k, v in records.items()})
+    assert all(f'solo/{l}' in records for l in ['hive', 'empty', 'champion'] if records), records
+
+    # Challenge: the fixed bot is visible; a win sets the record (fewest cells).
+    page.click('#modeSwitch [data-mode=challenge]')
+    page.wait_for_function("S.mode === 'challenge' && S.grey", timeout=20000)
+    page.select_option('#levelSelect', 'empty')
+    page.wait_for_function("S.level.id === 'empty' && S.grey && S.phase === 'prep'")
+    bot = page.evaluate("S.placements.filter(p => p.owner === 'blue').length")
+    assert bot > 0 and not page.evaluate("isHidden('blue')")
+    page.evaluate(PLACE, 'red'); page.evaluate("setReady('red')")
+    page.click('#btnStart')
+    page.wait_for_function("S.battle && S.phase === 'battle'")
+    print('Challenge empty, weak army vs', bot, 'bot pieces ->', finish(page), '|', page.evaluate("$('#resultLevel').textContent"))
+    # The champion (the strongest army of the pool training) as Red against the open bot.
+    page.click('#btnResultEdit')
+    page.evaluate("S.placements = S.placements.filter(p => p.owner !== 'red').concat(botPlacements(parsePieces(CHAMPION), 'red').map(p => ({ ...p, id: S.nextId++ }))); boardChanged()")
+    page.evaluate("setReady('red')")
+    page.click('#btnStart')
+    page.wait_for_function("S.battle && S.phase === 'battle'")
+    r = finish(page)
+    assert page.evaluate("S.battle.frame.maxGen === 0 && S.battle.frame.blueHome != null")
+    print('Challenge empty, the champion ->', r, '|', page.evaluate("$('#resultLevel').textContent"))
+    record = page.evaluate("levelRecord('challenge', currentLevel())")
+    assert (record is not None) == (r['winner'] == 'red'), record
+    if record:
+        page.click('#btnResultEdit')
+        page.evaluate("$('[data-act=clear]', $('#sideRed')).click()")
+        page.click('#btnLevelBest')
+        assert page.evaluate("levelRun().cells") == record['cells']
+        print('Challenge record:', record['cells'], 'cells,', record['cost'], 'pts; Best army reloads it')
     print('errors:', errors or 'none')
     browser.close()

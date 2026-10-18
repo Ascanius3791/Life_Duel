@@ -144,7 +144,8 @@ void Battle::checkEnd() {
 
     // A colour can never come back once it is gone: births need a neighbour of
     // that colour to win the vote. The survivor wins, wherever its cells are.
-    if (red_ == 0 || blue_ == 0) {
+    // Alone on the board, Red only ends early when it dies out (a draw at 0).
+    if (red_ == 0 || (blue_ == 0 && !config_.solo)) {
         reason_ = EndReason::Elimination;
         winner_ = red_ > 0 ? Winner::Red : blue_ > 0 ? Winner::Blue : Winner::Draw;
         return;

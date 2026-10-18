@@ -20,9 +20,10 @@ std::string configJson();
 std::string battlefieldJson(const std::string& preset, int width, int height, int count, std::uint64_t seed);
 
 // The settings of POST /api/battle. maxGenerations 0 means no limit; with
-// ignoreHome, cells in their own starting area do not count for the score.
+// ignoreHome, cells in their own starting area do not count for the score;
+// solo: Red plays alone, a board without Blue is no elimination.
 gol::BattleConfig battleConfig(int width, int height, int maxGenerations, const std::string& variant,
-                               bool ignoreHome);
+                               bool ignoreHome, bool solo);
 
 // A battle's state as /api/battle and /api/step return it. With ignoreHome it
 // also has the cells each colour has in its own area (redHome, blueHome). The

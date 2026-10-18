@@ -108,13 +108,14 @@ std::string battlefieldJson(const std::string& preset, int width, int height, in
 }
 
 gol::BattleConfig battleConfig(int width, int height, int maxGenerations, const std::string& variant,
-                               bool ignoreHome) {
+                               bool ignoreHome, bool solo) {
     gol::BattleConfig cfg;
     cfg.width = width;
     cfg.height = height;
     cfg.maxGenerations = maxGenerations;
     cfg.variant = variant == "contagion" ? gol::Variant::Contagion : gol::Variant::BirthOnly;
     cfg.ignoreHome = ignoreHome;
+    cfg.solo = solo;
     return cfg;
 }
 

@@ -63,9 +63,10 @@ const char* engine_battlefield(const char* preset, double w, double h, double co
 }
 
 // Same as POST /api/battle: `board` is the run-length encoded starting board.
-const char* engine_battle(double w, double h, double maxgen, const char* variant, double home, const char* board) {
+const char* engine_battle(double w, double h, double maxgen, const char* variant, double home, double solo,
+                          const char* board) {
     const gol::BattleConfig cfg = duel::battleConfig(clampInt(w, 50, 1000), clampInt(h, 20, 600),
-                                                     clampInt(maxgen, 0, 10000000), variant, home == 0);
+                                                     clampInt(maxgen, 0, 10000000), variant, home == 0, solo == 1);
     std::vector<std::uint8_t> cells(static_cast<std::size_t>(cfg.width) * cfg.height);
     if (!gol::decodeBoard(board, cells)) return error("board does not match the size");
     sessions.push_front({std::to_string(nextId++), gol::Battle(cfg, std::move(cells))});
