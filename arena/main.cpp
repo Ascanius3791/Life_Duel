@@ -77,7 +77,7 @@ struct Options {
     std::string from;   // pool: leagues that seed a new pool, comma separated
     int sample = 24;    // pool: opponents per search generation
     int finalists = 4;  // pool: new armies of the search that take the entrance test
-    std::vector<int> gate = {64, 256};  // pool: stages of the entrance test before "everyone"
+    double confidence = 0.95;  // pool: of the entrance test's drop-outs
     int poolSize = 0;   // pool: capacity (0 = keep the pool's, 1000 for a new one)
     std::vector<int> halving;  // pool: successive halving stages, e.g. 4,8,16
 };
@@ -148,8 +148,9 @@ void usage() {
         "  --halving A,B,..   successive halving instead: every candidate plays A opponents, the\n"
         "                     better half plays on up to B, and so on (the last number replaces --sample)\n"
         "  --finalists F      new armies of the last search round that take the entrance test (default 4)\n"
-        "  --gate A,B,..      the test: the finalists play A pool armies, the better half plays on up\n"
-        "                     to B, ..., the last one plays all the others (default 64,256; all = at once)\n"
+        "  --confidence C     the test: the finalists play the pool armies in batches; one drops out\n"
+        "                     once we are C sure (default 0.95) that its mean against the whole pool\n"
+        "                     ends below the bar or below the leading finalist's; the last plays everyone\n"
         "  --min-gain X       while the pool is not full: the score needed to join (default 0.02)\n"
         "  --iterations N, --max-hours H, --pop, --gens, --rng, --log-matches\n"
         "\n"
@@ -213,21 +214,18 @@ bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--sample") o.sample = std::max(1, integer());
         else if (a == "--finalists") o.finalists = std::max(1, integer());
         else if (a == "--pool-size") o.poolSize = std::max(1, integer());
-        else if (a == "--halving" || a == "--gate") {
-            const std::string text = value();
-            std::vector<int>& list = a == "--gate" ? o.gate : o.halving;
-            list.clear();
-            std::stringstream in(text);
+        else if (a == "--confidence") o.confidence = std::atof(value().c_str());
+        else if (a == "--halving") {
+            std::stringstream list(value());
             std::string item;
-            while (a == "--halving" || text != "all") {
-                if (!std::getline(in, item, ',')) break;
+            o.halving.clear();
+            while (std::getline(list, item, ',')) {
                 const int k = std::atoi(item.c_str());
-                if (k < 1 || (!list.empty() && k <= list.back())) {
-                    std::fprintf(stderr, "%s needs increasing numbers of opponents, e.g. %s\n", a.c_str(),
-                                 a == "--gate" ? "64,256 (or all)" : "4,8,16");
+                if (k < 1 || (!o.halving.empty() && k <= o.halving.back())) {
+                    std::fprintf(stderr, "--halving needs increasing numbers of opponents, e.g. 4,8,16\n");
                     return false;
                 }
-                list.push_back(k);
+                o.halving.push_back(k);
             }
         }
         else if (a == "--battles") o.battles = std::max(1, integer());
@@ -886,7 +884,7 @@ int pool(const Options& o) {
     const std::string csvPath = o.league + ".csv";
     const bool newCsv = !std::filesystem::exists(csvPath);
     std::ofstream csv(csvPath, std::ios::app);
-    if (newCsv) csv << "pool,replaced,fitness,score,threshold,result,removed,matches,gate_matches,seconds\n";
+    if (newCsv) csv << "pool,replaced,fitness,score,threshold,result,removed,matches,test_matches,below_bar,outraced,seconds\n";
 
     PoolOptions options;
     options.population = o.population;
@@ -894,7 +892,7 @@ int pool(const Options& o) {
     options.sample = o.halving.empty() ? o.sample : o.halving.back();
     options.halving = o.halving;
     options.finalists = o.finalists;
-    options.gate = o.gate;
+    options.confidence = o.confidence;
     options.minGain = o.minGain;
     int added = 0;
     auto saved = Clock::now();
@@ -916,14 +914,16 @@ int pool(const Options& o) {
         else std::printf("iter %4d  ", iter);
         std::printf("pool %4d  fitness %+.3f  score %+.3f vs %+.3f  ", pool.size(), r.fitness, r.score, r.threshold);
         if (r.known) std::printf("no new army among the best");
-        else if (!r.added) std::printf("not good enough");
+        else if (!r.added) std::printf("not good enough%s", r.droppedOut ? " (dropped out early)" : "");
         else if (r.removed.empty()) std::printf("added");
         else std::printf("replaced %s", r.removed.c_str());
-        std::printf("  %.1fs (test %lld battles), %.0f matches/s\n", seconds, r.gateMatches, r.matches / seconds);
+        std::printf("  %.1fs (test %lld battles, out: %d below the bar, %d behind), %.0f matches/s\n", seconds,
+                    r.gateMatches, r.belowBar, r.outraced, r.matches / seconds);
         std::string removed = r.removed;
         std::replace(removed.begin(), removed.end(), ',', ' ');
         csv << pool.size() << ',' << pool.replaced << ',' << r.fitness << ',' << r.score << ',' << r.threshold << ','
-            << outcome << ',' << removed << ',' << r.matches << ',' << r.gateMatches << ',' << seconds << '\n';
+            << outcome << ',' << removed << ',' << r.matches << ',' << r.gateMatches << ',' << r.belowBar << ','
+            << r.outraced << ',' << seconds << '\n';
         csv.flush();
         // The table of a large pool is big: save at most once a minute (and at the end).
         if (r.added && secondsSince(saved) > 60) {

@@ -166,23 +166,31 @@ struct PoolOptions {
     // Empty: every candidate plays the whole sample.
     std::vector<int> halving;
     // The entrance test: the best `finalists` new armies of the search play
-    // gate[0] pool armies, the better half plays on up to gate[1], ..., and the
-    // last one left plays everyone else. Opponents are drawn without
-    // replacement, the same ones for all finalists.
+    // the pool armies in the same random order, a batch at a time (16 first,
+    // then 8 or a quarter of those played so far). After each batch a
+    // finalist drops out once we are `confidence` sure (one-sided, normal
+    // approximation with the finite-population correction) that its mean
+    // against the whole pool will end below the bar, or below the leading
+    // finalist's (paired on the same opponents). The last one left plays
+    // everyone; its exact mean decides.
     int finalists = 4;
-    std::vector<int> gate = {64, 256};
+    double confidence = 0.95;
     double minGain = 0;  // while the pool is not full: the score needed to join
 };
 
 struct PoolResult {
     double fitness = 0;    // best fitness in the last search round (on that round's sample)
-    double score = 0;      // the entrant's exact mean against the pool (without the army it would replace)
+    double score = 0;      // the entrant's exact mean against the pool (without the army it would replace);
+                           // if every finalist dropped out: the best mean so far
     double threshold = 0;  // what it had to beat: minGain, or the weakest army's exact score
     bool added = false;
     bool known = false;    // no new army among the search's best (all are pool armies already)
     std::string removed;   // origin of the army it replaced, if any
     long long matches = 0;      // battles in total
     long long gateMatches = 0;  // of which in the entrance test
+    bool droppedOut = false;    // every finalist dropped out before playing everyone
+    int belowBar = 0;           // finalists that dropped out below the bar
+    int outraced = 0;           // finalists that dropped out behind another finalist
 };
 
 // One iteration: an evolutionary search for an army that beats the pool,

@@ -293,10 +293,13 @@ against armies that have left the pool stop counting.
   pool, drawn anew for every search round (`--gens` rounds), so it cannot
   specialise on a few opponents. With `--halving 4,8,16` every candidate plays
   4 of them, the better half plays on up to 8, and so on.
-- The entrance test: the best `--finalists` new armies (default 4) play
-  `--gate` pool armies (default 64,256): all of them play 64, the better half
-  plays on up to 256, and the last one plays everyone else. That fills its row
-  of the table.
+- The entrance test: the best `--finalists` new armies (default 4) play the
+  pool armies in the same random order, a batch at a time (16 first, then 8
+  or a quarter of those played so far). A finalist drops out once we are
+  `--confidence` sure (default 0.95) that its mean against the whole pool will
+  end below the bar, or below the leading finalist's. The last one left plays
+  everyone, which fills its row of the table; a candidate that fails usually
+  costs a few dozen battles instead of a whole pool.
 - While the pool is not full (the warm-up), it joins if its score exceeds
   `--min-gain`. Once full, it replaces the army with the lowest score if it
   beats that army's score against the rest of the pool. Each replacement is
