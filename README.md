@@ -7,7 +7,7 @@ Two programs that share one C++ simulation core:
 | `life_classic` | Conway's Game of Life with a native GUI (SFML): draw, place well-known patterns, continuous speed control and a max-speed mode. |
 | `life_battle` | **Life Duel**, a red-vs-blue 1v1 played in the browser. A small built-in HTTP server runs the simulation in C++, and the browser handles placement and rendering. |
 | `life_arena` | Trains Life Duel bots by self-play on one fixed battlefield (command line, no GUI). |
-| `life_challenge` | Lets the computer attack a Challenge level: the fewest red cells that beat its bot. |
+| `life_challenge` | Lets the computer attack the levels: the fewest red cells that beat a Challenge bot, the highest Solo score. |
 
 Life Duel also runs without any server, as a static web site: the same C++
 engine compiled to WebAssembly. That is how it is published on GitHub Pages and
@@ -132,9 +132,10 @@ your record back on the board.
   Hive league and of the open league, and on *Champion* the champion itself
   (they were trained with a 2000 generation limit and all cells counted).
   Where the computer has attacked a level (see
-  [`life_challenge`](#exploiting-the-challenges-life_challenge)), the level
+  [`life_challenge`](#exploiting-the-challenges-and-solo-levels-life_challenge)), the level
   text says how few cells it needed and **Computer's army** puts its army on
-  the board. A win with exactly that army is not stored as your record.
+  the board. A win with exactly that army is not stored as your record. The
+  same goes for Solo levels, with the computer's score.
 
 New levels are entries of `LEVELS` in `battle/web/levels.js` (armies written as
 in a league file). The battle runs with `solo=1` (see the API below), so a board
@@ -390,7 +391,7 @@ generation, how often the best candidate survives a pre-selection of the top
 quarter, and how near-identical armies are told apart. Logs go to `data/`,
 which is not committed.
 
-## Exploiting the challenges (`life_challenge`)
+## Exploiting the challenges and Solo levels (`life_challenge`)
 
 How few red cells does it take to beat a Challenge bot? `life_challenge` plays
 the level exactly like the browser does (same board, bot, Birthright, no
@@ -421,6 +422,19 @@ set can be drawn. It never sees the records players set.
 The output lists the winners with their LD1 army code (import under **Armies →
 My armies**). Battles still running after `--cap` generations (30000) count as
 lost; none did on the Hive.
+
+**Solo** (`--solo`): the most red cells outside Red's area when the board
+repeats; the starting cells don't matter beyond the budget. An evolutionary
+search keeps the 48 best armies (at most two that end the same way, else one
+family of variants takes over) and refills them from mutations, crossovers and
+fresh random armies. On *No man's land* it scored 950.7 within 90 seconds and
+then stopped improving: that is about the density of the debris any big
+chaotic reaction leaves behind (≈3.6% of the 208×128 cells that count), so
+beating it clearly would take engineered structures rather than luckier chaos.
+
+```bash
+./build/life_challenge --solo --level empty --minutes 3   # -> data/challenge/empty-solo.txt
+```
 
 **Hive lattice**: the search found a 5-cell winner within 30 seconds
 (about 9,000 battles). The exhaustive check shows that no army of 3 or 4

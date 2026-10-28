@@ -1,4 +1,4 @@
-// life_challenge: how far can the computer push a Challenge level of Life Duel?
+// life_challenge: how far can the computer push the one-player levels of Life Duel?
 //
 // A Challenge is won by beating the level's fixed bot (Blue). The record is the
 // fewest living red cells on the starting board, and like in the browser the
@@ -24,6 +24,9 @@
 //
 // Results go to a text file, one winner per line with its LD1 army code, which
 // the browser imports under My armies.
+//
+// With --solo it plays a Solo level instead and maximises the score: Red's
+// cells outside its own area at the end (see SoloSearch).
 #include "arena.hpp"
 
 #include "gol/battle.hpp"
@@ -61,24 +64,28 @@ bool chance(Rng& rng, double p) { return std::uniform_real_distribution<double>(
 struct Level {
     const char* id;
     const char* preset;
-    const char* bot;  // Blue's army, written in Red's frame
+    const char* bot;   // Challenge: Blue's army, written in Red's frame
+    const char* grey;  // Solo: an army standing in grey where Blue's would (or nullptr)
 };
+
+// The champion of No man's land (see levels.js).
+const char* const kChampion =
+    "acorn@36,6,r0,m1;mwss@46,5,r2,m1;block@41,36,r3,m0;mwss@43,43,r2,m1;acorn@30,57,r0,m1;"
+    "mwss@46,57,r0,m0;cell@21,44,r2,m1;cell@44,113,r1,m1;blinker@48,35,r2,m1;cell@16,36,r3,m0;beehive@14,59,r1,m0;"
+    "lwss@36,86,r2,m1;cell@31,108,r3,m0;acorn@40,109,r2,m0;lwss@45,123,r0,m0;cell@39,55,r3,m1;acorn@22,119,r2,m0;"
+    "cell@26,125,r1,m1;cell@35,124,r1,m0;cell@9,102,r0,m1";
 
 const Level kLevels[] = {
     {"hive", "hive_lattice",
      "beehive@6,2,r3,m1;block@38,0,r3,m1;block@2,0,r0,m0;r_pentomino@20,18,r1,m0;cell@6,21,r2,m0;"
      "r_pentomino@36,41,r3,m1;beehive@5,99,r0,m0;r_pentomino@49,49,r0,m1;beehive@42,77,r0,m1;beehive@1,76,r2,m1;"
      "blinker@44,90,r1,m1;cell@49,69,r1,m1;beehive@17,69,r2,m0;cell@20,80,r2,m0;gosper_gun@28,88,r3,m0;"
-     "cell@47,107,r2,m0;pulsar@1,112,r2,m0;cell@27,121,r2,m1;glider@39,16,r3,m0;cell@5,54,r2,m0"},
+     "cell@47,107,r2,m0;pulsar@1,112,r2,m0;cell@27,121,r2,m1;glider@39,16,r3,m0;cell@5,54,r2,m0", nullptr},
     {"empty", "empty",
      "acorn@36,6,r0,m1;mwss@44,8,r2,m1;acorn@30,51,r0,m1;cell@22,56,r1,m0;cell@21,33,r1,m1;acorn@17,15,r1,m0;"
      "blinker@11,36,r2,m1;hwss@25,65,r2,m1;mwss@46,76,r2,m0;glider@23,95,r1,m0;beehive@18,103,r3,m0;"
-     "cell@21,103,r0,m1;hwss@42,119,r2,m1;acorn@45,110,r2,m0"},
-    {"champion", "empty",
-     "acorn@36,6,r0,m1;mwss@46,5,r2,m1;block@41,36,r3,m0;mwss@43,43,r2,m1;acorn@30,57,r0,m1;"
-     "mwss@46,57,r0,m0;cell@21,44,r2,m1;cell@44,113,r1,m1;blinker@48,35,r2,m1;cell@16,36,r3,m0;beehive@14,59,r1,m0;"
-     "lwss@36,86,r2,m1;cell@31,108,r3,m0;acorn@40,109,r2,m0;lwss@45,123,r0,m0;cell@39,55,r3,m1;acorn@22,119,r2,m0;"
-     "cell@26,125,r1,m1;cell@35,124,r1,m0;cell@9,102,r0,m1"},
+     "cell@21,103,r0,m1;hwss@42,119,r2,m1;acorn@45,110,r2,m0", nullptr},
+    {"champion", "empty", kChampion, kChampion},
 };
 
 // ---------------------------------------------------------------------------
@@ -103,15 +110,23 @@ struct Outcome {
 
 class Challenge {
 public:
-    Challenge(const Level& level, int cap) : arena_(settingsFor(level)), cap_(cap) {
-        Army bot;
-        if (!parsePieces(arena_, level.bot, bot)) {
-            std::fprintf(stderr, "cannot parse the bot of level %s\n", level.id);
+    // With `solo`, the level's Solo mode: no Blue, and the level's grey army
+    // (if any) stands in grey where Blue's would.
+    Challenge(const Level& level, int cap, bool solo = false) : arena_(settingsFor(level)), cap_(cap), solo_(solo) {
+        Army army;
+        const char* text = solo ? (level.grey ? level.grey : "") : level.bot;
+        if (!parsePieces(arena_, text, army)) {
+            std::fprintf(stderr, "cannot parse the army of level %s\n", level.id);
             std::exit(1);
         }
-        base_ = arena_.board(Army{}, bot);
+        base_ = arena_.board(Army{}, army);
+        if (solo)
+            for (auto& c : base_)
+                if (c == gol::Blue) c = gol::Grey;
         zw_ = arena_.zones().leftEnd;
     }
+
+    bool solo() const { return solo_; }
 
     int zoneWidth() const { return zw_; }
     int height() const { return arena_.settings().height; }
@@ -127,6 +142,7 @@ public:
     gol::BattleConfig config() const {
         gol::BattleConfig config{arena_.settings().width, arena_.settings().height, arena_.settings().variant, 0};
         config.ignoreHome = true;
+        config.solo = solo_;
         return config;
     }
 
@@ -177,7 +193,8 @@ private:
 
     Arena arena_;
     int cap_;
-    std::vector<std::uint8_t> base_;  // grey battlefield and the bot
+    bool solo_;
+    std::vector<std::uint8_t> base_;  // grey battlefield and the bot (Challenge) or the grey army (Solo)
     int zw_ = 0;
 };
 
@@ -272,11 +289,19 @@ struct Options {
     double seedShare = 0.2; // ... or this share of the time
     std::vector<std::string> start;  // armies (life_arena form) to start from instead of seeding
     bool bench = false;
+    bool solo = false;
+    int population = 48;    // Solo: armies kept
 };
 
-class Search {
-public:
-    Search(const Challenge& ch, const Options& o) : ch_(ch), o_(o), rng_(o.rng) {
+// Random armies and the mutation helpers both searches use.
+class Breeder {
+protected:
+    struct Candidate {
+        CellSet cells;
+        std::string origin;
+    };
+
+    Breeder(const Challenge& ch, const Options& o) : ch_(ch), o_(o), rng_(o.rng) {
         const auto& arsenal = gol::battleArsenal();
         for (int i = 0; i < static_cast<int>(arsenal.size()); ++i) items_.push_back(i);
         for (const auto& item : arsenal) {
@@ -285,6 +310,82 @@ public:
                 for (int m = 0; m < 2; ++m) shapes_.push_back(gol::transformed(*p, rot, m == 1));
         }
     }
+
+    int threads() const { return o_.threads > 0 ? o_.threads : std::max(1u, std::thread::hardware_concurrency()); }
+    int budget() const { return ch_.arena().settings().budget; }
+    const gol::Pattern& shape(int item, int rot, bool mirror) const {
+        return shapes_[static_cast<std::size_t>(item) * 8 + rot * 2 + (mirror ? 1 : 0)];
+    }
+
+    // Arsenal pieces at random spots and orientations, at most `cells` cells in all.
+    CellSet randomArmy(int cells) {
+        CellSet s;
+        int left = cells;
+        for (int tries = 0; tries < 200 && left > 0; ++tries) {
+            const int item = items_[pick(rng_, 0, static_cast<int>(items_.size()) - 1)];
+            const auto& p = shape(item, pick(rng_, 0, 3), chance(rng_, 0.5));
+            const int n = static_cast<int>(p.cells.size());
+            if (n > left || p.width > ch_.zoneWidth()) continue;
+            ch_.stamp(s, p, pick(rng_, 0, ch_.zoneWidth() - p.width), pick(rng_, 0, ch_.height() - p.height));
+            left -= n;
+        }
+        normalise(s);
+        return s;
+    }
+
+    // The 8-connected group of cells (gaps of one cell bridged) around s[i].
+    std::vector<std::size_t> cluster(const CellSet& s, std::size_t i) const {
+        const int zw = ch_.zoneWidth();
+        std::vector<std::size_t> group{i};
+        std::vector<char> in(s.size(), 0);
+        in[i] = 1;
+        for (std::size_t k = 0; k < group.size(); ++k) {
+            const int a = s[group[k]];
+            for (std::size_t j = 0; j < s.size(); ++j) {
+                if (in[j]) continue;
+                const int b = s[j];
+                if (std::abs(a % zw - b % zw) <= 2 && std::abs(a / zw - b / zw) <= 2) {
+                    in[j] = 1;
+                    group.push_back(j);
+                }
+            }
+        }
+        return group;
+    }
+
+    bool inZone(int x, int y) const { return x >= 0 && x < ch_.zoneWidth() && y >= 0 && y < ch_.height(); }
+
+    // Moves the given cells by (dx, dy); false if one would leave the zone.
+    bool shift(CellSet& s, const std::vector<std::size_t>& which, int dx, int dy) const {
+        const int zw = ch_.zoneWidth();
+        for (std::size_t i : which) {
+            const int x = s[i] % zw + dx, y = s[i] / zw + dy;
+            if (!inZone(x, y)) return false;
+            s[i] = y * zw + x;
+        }
+        return true;
+    }
+
+    // An empty zone cell within `r` of cell c, or -1.
+    int near(const CellSet& s, int c, int r) {
+        const int zw = ch_.zoneWidth();
+        for (int t = 0; t < 20; ++t) {
+            const int x = c % zw + pick(rng_, -r, r), y = c / zw + pick(rng_, -r, r);
+            if (inZone(x, y) && !std::binary_search(s.begin(), s.end(), y * zw + x)) return y * zw + x;
+        }
+        return -1;
+    }
+
+    const Challenge& ch_;
+    const Options& o_;
+    Rng rng_;
+    std::vector<int> items_;
+    std::vector<gol::Pattern> shapes_;
+};
+
+class Search : Breeder {
+public:
+    Search(const Challenge& ch, const Options& o) : Breeder(ch, o) {}
 
     void run() {
         start_ = Clock::now();
@@ -363,76 +464,6 @@ public:
     }
 
 private:
-    struct Candidate {
-        CellSet cells;
-        std::string origin;
-    };
-
-    int threads() const { return o_.threads > 0 ? o_.threads : std::max(1u, std::thread::hardware_concurrency()); }
-    int budget() const { return ch_.arena().settings().budget; }
-    const gol::Pattern& shape(int item, int rot, bool mirror) const {
-        return shapes_[static_cast<std::size_t>(item) * 8 + rot * 2 + (mirror ? 1 : 0)];
-    }
-
-    // Arsenal pieces at random spots and orientations, at most `cells` cells in all.
-    CellSet randomArmy(int cells) {
-        CellSet s;
-        int left = cells;
-        for (int tries = 0; tries < 200 && left > 0; ++tries) {
-            const int item = items_[pick(rng_, 0, static_cast<int>(items_.size()) - 1)];
-            const auto& p = shape(item, pick(rng_, 0, 3), chance(rng_, 0.5));
-            const int n = static_cast<int>(p.cells.size());
-            if (n > left || p.width > ch_.zoneWidth()) continue;
-            ch_.stamp(s, p, pick(rng_, 0, ch_.zoneWidth() - p.width), pick(rng_, 0, ch_.height() - p.height));
-            left -= n;
-        }
-        normalise(s);
-        return s;
-    }
-
-    // The 8-connected group of cells (gaps of one cell bridged) around s[i].
-    std::vector<std::size_t> cluster(const CellSet& s, std::size_t i) const {
-        const int zw = ch_.zoneWidth();
-        std::vector<std::size_t> group{i};
-        std::vector<char> in(s.size(), 0);
-        in[i] = 1;
-        for (std::size_t k = 0; k < group.size(); ++k) {
-            const int a = s[group[k]];
-            for (std::size_t j = 0; j < s.size(); ++j) {
-                if (in[j]) continue;
-                const int b = s[j];
-                if (std::abs(a % zw - b % zw) <= 2 && std::abs(a / zw - b / zw) <= 2) {
-                    in[j] = 1;
-                    group.push_back(j);
-                }
-            }
-        }
-        return group;
-    }
-
-    bool inZone(int x, int y) const { return x >= 0 && x < ch_.zoneWidth() && y >= 0 && y < ch_.height(); }
-
-    // Moves the given cells by (dx, dy); false if one would leave the zone.
-    bool shift(CellSet& s, const std::vector<std::size_t>& which, int dx, int dy) const {
-        const int zw = ch_.zoneWidth();
-        for (std::size_t i : which) {
-            const int x = s[i] % zw + dx, y = s[i] / zw + dy;
-            if (!inZone(x, y)) return false;
-            s[i] = y * zw + x;
-        }
-        return true;
-    }
-
-    // An empty zone cell within `r` of cell c, or -1.
-    int near(const CellSet& s, int c, int r) {
-        const int zw = ch_.zoneWidth();
-        for (int t = 0; t < 20; ++t) {
-            const int x = c % zw + pick(rng_, -r, r), y = c / zw + pick(rng_, -r, r);
-            if (inZone(x, y) && !std::binary_search(s.begin(), s.end(), y * zw + x)) return y * zw + x;
-        }
-        return -1;
-    }
-
     // Parent: from the smallest counts, the smallest one more likely; within a
     // count, the larger margin more likely.
     const Winner& parent() {
@@ -588,17 +619,239 @@ private:
         }
     }
 
-    const Challenge& ch_;
-    const Options& o_;
-    Rng rng_;
-    std::vector<int> items_;
-    std::vector<gol::Pattern> shapes_;
     std::map<int, std::vector<Winner>> archive_;
     std::unordered_map<std::string, char> seen_;
     Clock::time_point start_;
     long long battles_ = 0, wins_ = 0, capped_ = 0;
     double lastReport_ = -1e9, recordAt_ = 0;
     bool sweepPending_ = false, dirty_ = false;
+};
+
+// ---------------------------------------------------------------------------
+// Solo: the most red cells at the end
+// ---------------------------------------------------------------------------
+// The Solo score is Red's cells outside its own area when the board repeats
+// (the average over the cycle). How many cells Red starts with does not
+// matter, only the budget limits them. An evolutionary search: a population of
+// the best armies so far, each round refilled from mutations (add, drop,
+// replace or move pieces and cells), crossovers (the top of one army, the
+// bottom of another) and a few fresh random armies. At most two members may
+// end the same way, so one family of variants cannot fill the population.
+class SoloSearch : Breeder {
+public:
+    SoloSearch(const Challenge& ch, const Options& o) : Breeder(ch, o) {}
+
+    void run() {
+        start_ = Clock::now();
+        const int batch = threads() * 6;
+        for (const auto& text : o_.start) {
+            CellSet s;
+            if (!parseCells(ch_, text, s)) {
+                std::fprintf(stderr, "cannot parse start army: %s\n", text.c_str());
+                std::exit(1);
+            }
+            evaluate({{s, "start"}});
+        }
+        int round = 0;
+        while (secondsSince(start_) < o_.minutes * 60) {
+            std::vector<Candidate> cands;
+            const bool seeding = static_cast<int>(pop_.size()) < o_.population;
+            for (int i = 0; i < batch; ++i) {
+                if (seeding || chance(rng_, 0.06)) cands.push_back({randomArmy(pick(rng_, budget() / 2, budget())), "random"});
+                else if (chance(rng_, 0.15)) cands.push_back(crossover());
+                else cands.push_back(mutate());
+            }
+            evaluate(cands);
+            report(++round);
+        }
+        report(round, true);
+    }
+
+private:
+    struct Member {
+        CellSet cells;
+        Outcome outcome;
+        std::string origin;
+    };
+
+    // Tournament of two: the better one of two random members.
+    const Member& parent() {
+        const int n = static_cast<int>(pop_.size());
+        return pop_[std::min(pick(rng_, 0, n - 1), pick(rng_, 0, n - 1))];  // sorted, best first
+    }
+
+    // Drops random clusters until the army fits the budget.
+    void fit(CellSet& s) {
+        while (static_cast<int>(s.size()) > budget()) {
+            auto group = cluster(s, static_cast<std::size_t>(pick(rng_, 0, static_cast<int>(s.size()) - 1)));
+            std::sort(group.rbegin(), group.rend());
+            for (std::size_t j : group) s.erase(s.begin() + static_cast<long>(j));
+        }
+    }
+
+    void addPiece(CellSet& s, int room) {
+        for (int tries = 0; tries < 50; ++tries) {
+            const auto& p = shape(items_[pick(rng_, 0, static_cast<int>(items_.size()) - 1)], pick(rng_, 0, 3),
+                                  chance(rng_, 0.5));
+            if (static_cast<int>(p.cells.size()) > room || p.width > ch_.zoneWidth()) continue;
+            ch_.stamp(s, p, pick(rng_, 0, ch_.zoneWidth() - p.width), pick(rng_, 0, ch_.height() - p.height));
+            return;
+        }
+    }
+
+    Candidate crossover() {
+        const Member& a = parent();
+        const Member& b = parent();
+        const int cut = pick(rng_, 1, ch_.height() - 1) * ch_.zoneWidth();
+        CellSet s;
+        for (int c : a.cells)
+            if (c < cut) s.push_back(c);
+        for (int c : b.cells)
+            if (c >= cut) s.push_back(c);
+        normalise(s);
+        fit(s);
+        return {s, "cross"};
+    }
+
+    Candidate mutate() {
+        CellSet s = parent().cells;
+        const int zw = ch_.zoneWidth();
+        std::string op;
+        int ops = 1;
+        while (ops < 3 && chance(rng_, 0.4)) ++ops;
+        for (int k = 0; k < ops; ++k) {
+            const int roll = pick(rng_, 0, 99);
+            if (s.empty() || roll < 20) {  // a new piece
+                addPiece(s, budget() - static_cast<int>(s.size()));
+                normalise(s);
+                op += "+piece ";
+                continue;
+            }
+            const std::size_t i = static_cast<std::size_t>(pick(rng_, 0, static_cast<int>(s.size()) - 1));
+            if (roll < 30) {  // drop a cluster
+                auto group = cluster(s, i);
+                std::sort(group.rbegin(), group.rend());
+                for (std::size_t j : group) s.erase(s.begin() + static_cast<long>(j));
+                op += "-group ";
+            } else if (roll < 45) {  // a cluster becomes another piece
+                auto group = cluster(s, i);
+                int cx = 0, cy = 0;
+                for (std::size_t j : group) cx += s[j] % zw, cy += s[j] / zw;
+                cx /= static_cast<int>(group.size()), cy /= static_cast<int>(group.size());
+                std::sort(group.rbegin(), group.rend());
+                for (std::size_t j : group) s.erase(s.begin() + static_cast<long>(j));
+                for (int tries = 0; tries < 50; ++tries) {
+                    const auto& p = shape(items_[pick(rng_, 0, static_cast<int>(items_.size()) - 1)], pick(rng_, 0, 3),
+                                          chance(rng_, 0.5));
+                    if (static_cast<int>(p.cells.size() + s.size()) > budget()) continue;
+                    ch_.stamp(s, p, cx - p.width / 2, cy - p.height / 2);
+                    break;
+                }
+                op += "swap ";
+            } else if (roll < 65) {  // shift a cluster
+                const auto group = cluster(s, i);
+                int dx = 0, dy = 0;
+                while (dx == 0 && dy == 0) dx = pick(rng_, -4, 4), dy = pick(rng_, -4, 4);
+                CellSet t = s;
+                if (shift(t, group, dx, dy)) s = t;
+                op += "shift ";
+            } else if (roll < 72) {  // shift everything
+                std::vector<std::size_t> all(s.size());
+                for (std::size_t j = 0; j < s.size(); ++j) all[j] = j;
+                CellSet t = s;
+                if (shift(t, all, pick(rng_, -3, 3), pick(rng_, -6, 6))) s = t;
+                op += "shiftall ";
+            } else if (roll < 84) {  // move a cell nearby
+                const int c = near(s, s[i], 2);
+                if (c >= 0) s[i] = c;
+                op += "move ";
+            } else if (roll < 92) {  // drop a cell
+                s.erase(s.begin() + static_cast<long>(i));
+                op += "-cell ";
+            } else {  // one cell more
+                const int c = near(s, s[i], 1);
+                if (c >= 0) s.push_back(c);
+                op += "+cell ";
+            }
+            normalise(s);
+        }
+        fit(s);
+        if (!op.empty()) op.pop_back();
+        return {s, op};
+    }
+
+    void evaluate(const std::vector<Candidate>& cands) {
+        std::vector<Outcome> outcomes(cands.size());
+        std::vector<char> fresh(cands.size(), 0);
+        for (std::size_t i = 0; i < cands.size(); ++i)
+            if (!cands[i].cells.empty()) fresh[i] = seen_.emplace(key(cands[i].cells), 0).second;
+        parallelFor(static_cast<int>(cands.size()), threads(), [&](int i) {
+            if (fresh[i]) outcomes[i] = ch_.play(cands[i].cells);
+        });
+        for (std::size_t i = 0; i < cands.size(); ++i) {
+            if (!fresh[i]) continue;
+            ++battles_;
+            if (outcomes[i].capped) {
+                ++capped_;
+                continue;
+            }
+            const double score = outcomes[i].red;
+            if (static_cast<int>(pop_.size()) >= o_.population && score <= pop_.back().outcome.red) continue;
+            // Armies that end the same way (score and generation) are nearly
+            // always variants of one army: keep two, or they take over.
+            int same = 0;
+            for (const auto& m : pop_)
+                same += m.outcome.red == score && m.outcome.generation == outcomes[i].generation;
+            if (same >= 2) continue;
+            if (pop_.empty() || score > pop_.front().outcome.red) recordAt_ = secondsSince(start_), dirty_ = true;
+            pop_.push_back({cands[i].cells, outcomes[i], cands[i].origin});
+            std::stable_sort(pop_.begin(), pop_.end(),
+                             [](const Member& a, const Member& b) { return a.outcome.red > b.outcome.red; });
+            if (static_cast<int>(pop_.size()) > o_.population) pop_.pop_back();
+        }
+        if (seen_.size() > 4'000'000) seen_.clear();
+    }
+
+    void report(int round, bool final = false) {
+        const double t = secondsSince(start_);
+        if (!final && t - lastReport_ < 15) return;
+        lastReport_ = t;
+        if (pop_.empty()) return;
+        double mean = 0;
+        for (const auto& m : pop_) mean += m.outcome.red;
+        mean /= static_cast<double>(pop_.size());
+        const auto& b = pop_.front();
+        std::printf("[%6.0fs] round %5d  battles %8lld  capped %lld  best %.1f (%zu cells, %s at gen %d)  population mean %.1f\n",
+                    t, round, battles_, capped_, b.outcome.red, b.cells.size(), reasonName(b.outcome.reason),
+                    b.outcome.generation, mean);
+        std::fflush(stdout);
+        if (dirty_ || final) save();
+    }
+
+    void save() {
+        dirty_ = false;
+        if (o_.out.empty()) return;
+        std::ofstream f(o_.out);
+        f << "# life_challenge --solo --level " << o_.level << ": the best armies, best first\n";
+        f << "# battles " << battles_ << ", capped " << capped_ << ", " << secondsSince(start_) / 60
+          << " min, best found after " << recordAt_ / 60 << " min\n";
+        for (std::size_t i = 0; i < pop_.size() && i < 10; ++i) {
+            const auto& m = pop_[i];
+            const auto& o = m.outcome;
+            f << "\n# score " << o.red << ", " << m.cells.size() << " cells, " << reasonName(o.reason) << " at generation "
+              << o.generation << ", last step: " << m.origin << "\n";
+            f << picture(ch_, m.cells);
+            f << ld1Code(ch_, m.cells, "solo " + o_.level + " " + std::to_string(static_cast<int>(o.red))) << "\n";
+            f << piecesText(ch_, m.cells) << "\n";
+        }
+    }
+
+    std::vector<Member> pop_;
+    std::unordered_map<std::string, char> seen_;
+    Clock::time_point start_;
+    long long battles_ = 0, capped_ = 0;
+    double lastReport_ = -1e9, recordAt_ = 0;
+    bool dirty_ = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -961,6 +1214,8 @@ void usage() {
                  "  --verify ARMY    play one army (life_arena form) with both engines and print the result\n"
                  "  --exhaustive K   instead: play every army of up to K cells (default out: data/challenge/<level>-exhaustive.txt)\n"
                  "  --vs-league FILE with --verify: play the army against a life_arena league, weighted by its Nash mixture\n"
+                 "  --solo           Solo mode instead: the most red cells outside Red's area at the end\n"
+                 "  --population P   Solo: armies kept by the search (48)\n"
                  "  --bench          time a few random armies and exit\n");
 }
 
@@ -991,6 +1246,8 @@ int main(int argc, char** argv) {
         else if (a == "--slack") o.slack = std::max(0, std::atoi(value().c_str()));
         else if (a == "--verify") verify = value();
         else if (a == "--bench") o.bench = true;
+        else if (a == "--solo") o.solo = true;
+        else if (a == "--population") o.population = std::max(2, std::atoi(value().c_str()));
         else if (a == "--vs-league") league = value();
         else if (a == "--exhaustive") exhaustive = std::max(1, std::atoi(value().c_str()));
         else {
@@ -1005,9 +1262,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "unknown level %s\n", o.level.c_str());
         return 2;
     }
-    if (o.out.empty()) o.out = "data/challenge/" + o.level + (exhaustive ? "-exhaustive" : "") + ".txt";
+    if (o.out.empty()) o.out = "data/challenge/" + o.level + (o.solo ? "-solo" : exhaustive ? "-exhaustive" : "") + ".txt";
 
-    Challenge ch(*level, o.cap);
+    Challenge ch(*level, o.cap, o.solo);
     if (!verify.empty()) {
         CellSet s;
         if (!parseCells(ch, verify, s)) {
@@ -1023,6 +1280,14 @@ int main(int argc, char** argv) {
                         reasonName(r.reason), r.generation, r.red, r.blue, r.capped ? " (capped)" : "");
         }
         std::printf("%s", picture(ch, s).c_str());
+        return 0;
+    }
+    if (o.solo && (exhaustive || !league.empty())) {
+        std::fprintf(stderr, "--solo works with the search, --verify and --bench only\n");
+        return 2;
+    }
+    if (o.solo && verify.empty() && !o.bench) {
+        SoloSearch(ch, o).run();
         return 0;
     }
     if (exhaustive) {

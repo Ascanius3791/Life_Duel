@@ -39,10 +39,11 @@ const CHAMPION = 'acorn@36,6,r0,m1;mwss@46,5,r2,m1;block@41,36,r3,m0;mwss@43,43,
   'cell@26,125,r1,m1;cell@35,124,r1,m0;cell@9,102,r0,m1';
 
 // Each level: a battlefield, its rules, and what it holds in each mode.
-//   solo:      { text, grey? }  grey: an army that stands in grey where Blue's would
+//   solo:      { text, grey?, computer? }  grey: an army that stands in grey where Blue's would
 //   challenge: { text?, bot, botName, computer? }  bot: Blue's army (mirror image of these pieces)
-//              computer: { pieces, note }  the fewest cells the computer won with (life_challenge,
-//              data/challenge/<id>.txt); it searched from random armies, without the players' records
+// computer: { pieces, note, score? }  the computer's best army (life_challenge, data/challenge/):
+//   in Solo the highest score, in Challenge the fewest cells that won. It searched from random
+//   armies, without the players' records.
 // Records are kept per mode and level id: give a level a new id when it changes.
 const LEVELS = [
   {
@@ -66,7 +67,37 @@ const LEVELS = [
   {
     id: 'empty', name: "No man's land", rules: LEAGUE_RULES,
     field: { preset: 'empty', count: 900, seed: 1 },
-    solo: { text: 'Nothing to convert: grow as many red cells out in the field as you can.' },
+    solo: {
+      text: 'Nothing to convert: grow as many red cells out in the field as you can.',
+      computer: {
+        score: 950.7,
+        pieces: 'cell@9,11,r0,m0;cell@46,11,r0,m0;cell@7,12,r0,m0;cell@4,13,r0,m0;cell@5,13,r0,m0;cell@6,13,r0,m0;' +
+          'cell@9,13,r0,m0;cell@10,13,r0,m0;cell@12,21,r0,m0;cell@13,21,r0,m0;cell@26,21,r0,m0;' +
+          'cell@27,21,r0,m0;cell@28,21,r0,m0;cell@31,21,r0,m0;cell@32,21,r0,m0;cell@13,22,r0,m0;' +
+          'cell@29,22,r0,m0;cell@31,23,r0,m0;cell@50,26,r0,m0;cell@51,27,r0,m0;cell@49,28,r0,m0;' +
+          'cell@50,28,r0,m0;cell@51,28,r0,m0;cell@12,31,r0,m0;cell@13,31,r0,m0;cell@14,31,r0,m0;' +
+          'cell@11,32,r0,m0;cell@15,32,r0,m0;cell@10,33,r0,m0;cell@16,33,r0,m0;cell@23,33,r0,m0;' +
+          'cell@10,34,r0,m0;cell@16,34,r0,m0;cell@13,35,r0,m0;cell@1,36,r0,m0;cell@13,36,r0,m0;cell@0,37,r0,m0;' +
+          'cell@2,37,r0,m0;cell@48,38,r0,m0;cell@0,39,r0,m0;cell@17,39,r0,m0;cell@18,39,r0,m0;cell@48,39,r0,m0;' +
+          'cell@50,39,r0,m0;cell@17,40,r0,m0;cell@18,40,r0,m0;cell@49,41,r0,m0;cell@48,42,r0,m0;' +
+          'cell@48,43,r0,m0;cell@48,44,r0,m0;cell@25,53,r0,m0;cell@24,54,r0,m0;cell@25,54,r0,m0;' +
+          'cell@26,55,r0,m0;cell@27,55,r0,m0;cell@28,55,r0,m0;cell@27,57,r0,m0;cell@38,73,r0,m0;' +
+          'cell@47,73,r0,m0;cell@36,74,r0,m0;cell@37,74,r0,m0;cell@41,74,r0,m0;cell@42,74,r0,m0;' +
+          'cell@37,75,r0,m0;cell@41,75,r0,m0;cell@46,75,r0,m0;cell@47,75,r0,m0;cell@48,75,r0,m0;' +
+          'cell@36,76,r0,m0;cell@37,77,r0,m0;cell@37,78,r0,m0;cell@36,81,r0,m0;cell@37,81,r0,m0;' +
+          'cell@36,82,r0,m0;cell@46,104,r0,m0;cell@48,104,r0,m0;cell@49,105,r0,m0;cell@49,106,r0,m0;' +
+          'cell@21,107,r0,m0;cell@22,107,r0,m0;cell@46,107,r0,m0;cell@49,107,r0,m0;cell@21,108,r0,m0;' +
+          'cell@22,108,r0,m0;cell@47,108,r0,m0;cell@48,108,r0,m0;cell@49,108,r0,m0;cell@1,110,r0,m0;' +
+          'cell@20,110,r0,m0;cell@21,110,r0,m0;cell@22,110,r0,m0;cell@23,110,r0,m0;cell@0,111,r0,m0;' +
+          'cell@1,111,r0,m0;cell@19,111,r0,m0;cell@20,111,r0,m0;cell@23,111,r0,m0;cell@24,111,r0,m0;' +
+          'cell@18,112,r0,m0;cell@3,113,r0,m0;cell@4,113,r0,m0;cell@5,113,r0,m0;cell@26,113,r0,m0;' +
+          'cell@17,114,r0,m0;cell@25,114,r0,m0;cell@7,115,r0,m0;cell@8,115,r0,m0;cell@9,115,r0,m0;' +
+          'cell@10,115,r0,m0;cell@29,116,r0,m0;cell@33,116,r0,m0;cell@28,117,r0,m0;cell@28,118,r0,m0;' +
+          'cell@33,118,r0,m0;cell@28,119,r0,m0;cell@29,119,r0,m0;cell@30,119,r0,m0;cell@32,119,r0,m0;' +
+          'cell@29,121,r0,m0',
+        note: 'The board repeats at generation 8,027 (life_challenge --solo, 3 minutes of search).',
+      },
+    },
     challenge: {
       botName: 'Open bot #146 (9.6% Nash)',
       // assets/leagues/open-260x128.txt, army #146: the largest Nash weight.
@@ -228,9 +259,9 @@ function loadBestArmy() {
   loadLevelArmy(record.pieces, 'the army of your record');
 }
 
-// The computer's best army of a Challenge level: { pieces, cells } or null.
-function computerArmy(level) {
-  const c = level.challenge && level.challenge.computer;
+// The computer's best army of a level in `mode`: { pieces, cells, score, note } or null.
+function computerArmy(level, mode = S.mode) {
+  const c = level[mode] && level[mode].computer;
   if (!c) return null;
   const pieces = parsePieces(c.pieces);
   let cells = 0;
@@ -238,7 +269,7 @@ function computerArmy(level) {
     const pattern = S.arsenal.get(p.pattern);
     if (pattern) cells += pattern.cells.length;
   }
-  return { pieces, cells, note: c.note };
+  return { pieces, cells, score: c.score, note: c.note };
 }
 
 // Same pieces, in any order.
@@ -246,7 +277,7 @@ const piecesKey = pieces => pieces.map(p => `${p.pattern}@${p.x},${p.y},${p.rot 
 
 function loadComputerArmy() {
   const c = computerArmy(currentLevel());
-  if (c) loadLevelArmy(c.pieces, `the computer's army (${fmt(c.cells)} cells)`);
+  if (c) loadLevelArmy(c.pieces, S.mode === 'solo' ? `the computer's army (score ${soloScore(c.score)})` : `the computer's army (${fmt(c.cells)} cells)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -263,14 +294,16 @@ function updateLevelUi() {
   $('#btnLevelBest').disabled = !(record && Array.isArray(record.pieces) && record.pieces.length) || S.phase !== 'prep';
   $('#btnLevelBest').title = record ? `Put the army of your record on the board (${recordText(mode, record)}${record.when ? `, ${record.when}` : ''})`
     : 'Your record army will be kept here';
-  const computer = mode === 'challenge' ? computerArmy(level) : null;
+  const computer = computerArmy(level, mode);
   $('#btnLevelComputer').hidden = !computer;
   $('#btnLevelComputer').disabled = S.phase !== 'prep';
-  if (computer) $('#btnLevelComputer').title = `Put the computer's best army on the board: ${fmt(computer.cells)} cells. ${computer.note}`;
+  const computerText = !computer ? '' : mode === 'solo' ? `The computer scored ${soloScore(computer.score)}.`
+    : `The computer won with ${fmt(computer.cells)} cells.`;
+  if (computer) $('#btnLevelComputer').title = `Put the computer's best army on the board. ${computerText} ${computer.note}`;
   let rules = mode === 'solo'
     ? 'Score: red cells outside your area when the board repeats (no generation limit).'
     : `Beat ${level.challenge.botName} with as few red cells as you can (no generation limit, home cells don't count).`;
-  if (computer) rules += ` The computer won with ${fmt(computer.cells)} cells.`;
+  if (computer) rules += ` ${computerText}`;
   $('#levelDesc').textContent = level[mode].text ? `${level[mode].text} ${rules}` : rules;
   $('#levelDesc').title = $('#levelDesc').textContent;
 }
@@ -292,7 +325,10 @@ function levelResult(frame) {
   let line;
   if (mode === 'solo') {
     const run = { ...b.level.run, score: frame.redScore };
-    const better = isBetter(mode, run, best);
+    const computer = computerArmy(level, mode);
+    // The computer's army itself is not a record of yours.
+    const borrowed = !!computer && piecesKey(run.pieces) === piecesKey(computer.pieces);
+    const better = !borrowed && isBetter(mode, run, best);
     if (better && run.score > 0) storeRecord(mode, level, run);
     $('#resultBanner').className = 'result-banner red';
     $('#resultBanner').textContent = `Score ${soloScore(run.score)}`;
@@ -305,13 +341,15 @@ function levelResult(frame) {
         : `The board started repeating every ${frame.period} generations (at ${fmt(frame.gen)}): ${soloScore(run.score)} red cells outside Red's area on average.`;
     } else reason = `Generation ${fmt(frame.gen)}: ${soloScore(run.score)} red cells outside Red's area.`;
     $('#resultReason').textContent = reason + greyText;
-    line = better && run.score > 0 ? `New record on ${level.name}!${best ? ` (before: ${soloScore(best.score)})` : ''}`
-      : `${level.name}: your record is ${best ? soloScore(best.score) : '0'}.`;
+    line = borrowed ? 'The computer\'s army: it does not count as your record.'
+      : better && run.score > 0 ? `New record on ${level.name}!${best ? ` (before: ${soloScore(best.score)})` : ''}`
+        : `${level.name}: your record is ${best ? soloScore(best.score) : '0'}.`;
     line += ` Your army: ${fmt(run.cells)} cells, ${run.cost} pts.`;
+    if (computer && !borrowed) line += ` The computer's best: ${soloScore(computer.score)}.`;
   } else {
     const run = b.level.run;
     const won = frame.winner === 'red';
-    const computer = computerArmy(level);
+    const computer = computerArmy(level, mode);
     // The computer's army itself is not a record of yours.
     const borrowed = !!computer && piecesKey(run.pieces) === piecesKey(computer.pieces);
     const better = won && !borrowed && isBetter(mode, run, best);
