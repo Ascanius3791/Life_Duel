@@ -57,6 +57,7 @@ struct Options {
     bool leagueGiven = false;
     Settings settings;
     bool settingsGiven = false;
+    std::vector<std::string> givenSettings;  // the battle setting options given, e.g. "--budget"
     int iterations = 20;
     bool iterationsGiven = false;
     bool twins = false;
@@ -74,7 +75,7 @@ struct Options {
     bool showBoard = false;
     int battles = 20;
     std::string logMatches;
-    std::string from;   // pool: leagues that seed a new pool, comma separated
+    std::string from;   // train, pool: leagues that seed a new league or pool, comma separated
     int sample = 24;    // pool: opponents per search generation
     int maxEntrants = 0;      // pool: armies that may join per iteration (0: 2% of the pool size)
     double maxSimilar = 0.9;  // pool: copy check
@@ -96,7 +97,7 @@ void usage() {
         "League:\n"
         "  --league FILE      league file (default league.txt; FILE.json is written next to it)\n"
         "\n"
-        "Battle settings (only when a new league is created):\n"
+        "Battle settings (only when a new league is created; with --from they default to the first FILE's):\n"
         "  --size WxH         board size (default 260x128)\n"
         "  --preset ID        battlefield preset (default random_mirror)\n"
         "  --count N          grey cells for random presets (default 900)\n"
@@ -111,6 +112,10 @@ void usage() {
         "  --gens N           generations of the search per iteration (default 20)\n"
         "  --support N        strongest mixture members to train against (default 6)\n"
         "  --seeds N          random armies in a new league (default 8)\n"
+        "  --from A,B         seed a new league (both twins with --twins) with the armies of these leagues\n"
+        "                     instead (same settings). Armies over the budget, e.g. bought under older prices,\n"
+        "                     sell pieces until they fit: each time the piece whose sale hurts least against\n"
+        "                     the Nash mixture of all their armies; empty armies and copies are dropped\n"
         "  --min-gain X       minimum score vs the mixture to join the league (default 0.02)\n"
         "  --threads N        worker threads (default: all cores)\n"
         "  --rng N            random seed of the search (default 1)\n"
@@ -143,7 +148,7 @@ void usage() {
         "test, and the winner replaces the army with the lowest score if it beats that army's score\n"
         "against the rest of the pool. FILE.state keeps the table, FILE.csv logs every iteration.\n"
         "  --pool-size N      capacity of the pool (default 1000)\n"
-        "  --from A,B         seed a new pool with the armies of these leagues (same settings);\n"
+        "  --from A,B         seed a new pool with the armies of these leagues, as train --from does;\n"
         "                     without it a new pool starts with --seeds random armies\n"
         "  --sample K         opponents per search round (default 24)\n"
         "  --halving A,B,..   successive halving instead: every candidate plays A opponents, the\n"
@@ -177,6 +182,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
             return argv[++i];
         };
         auto integer = [&]() { return std::atoi(value().c_str()); };
+        auto given = [&] { o.settingsGiven = true, o.givenSettings.push_back(a); };
         Settings& s = o.settings;
         if (a == "--league") o.league = value(), o.leagueGiven = true;
         else if (a == "--size") {
@@ -185,18 +191,18 @@ bool parseArgs(int argc, char** argv, Options& o) {
                 std::fprintf(stderr, "bad --size %s\n", v.c_str());
                 return false;
             }
-            o.settingsGiven = true;
-        } else if (a == "--preset") s.preset = value(), o.settingsGiven = true;
-        else if (a == "--count") s.count = integer(), o.settingsGiven = true;
-        else if (a == "--field-seed") s.fieldSeed = std::strtoull(value().c_str(), nullptr, 10), o.settingsGiven = true;
-        else if (a == "--budget") s.budget = std::max(1, integer()), o.settingsGiven = true;
-        else if (a == "--maxgen") s.maxGenerations = std::max(0, integer()), o.settingsGiven = true;
+            given();
+        } else if (a == "--preset") s.preset = value(), given();
+        else if (a == "--count") s.count = integer(), given();
+        else if (a == "--field-seed") s.fieldSeed = std::strtoull(value().c_str(), nullptr, 10), given();
+        else if (a == "--budget") s.budget = std::max(1, integer()), given();
+        else if (a == "--maxgen") s.maxGenerations = std::max(0, integer()), given();
         else if (a == "--variant") {
             if (!parseVariant(value(), s.variant)) {
                 std::fprintf(stderr, "--variant must be birth or contagion\n");
                 return false;
             }
-            o.settingsGiven = true;
+            given();
         } else if (a == "--iterations") o.iterations = std::max(0, integer()), o.iterationsGiven = true;
         else if (a == "--twins") o.twins = true;
         else if (a == "--eval-every") o.evalEvery = std::max(1, integer());
@@ -306,6 +312,116 @@ std::string summary(const Arena& arena, const Army& army) {
     return out.empty() ? "(empty)" : out;
 }
 
+bool sameSettings(const Settings& a, const Settings& b) {
+    return a.width == b.width && a.height == b.height && a.preset == b.preset && a.count == b.count &&
+           a.fieldSeed == b.fieldSeed && a.budget == b.budget && a.maxGenerations == b.maxGenerations &&
+           a.variant == b.variant;
+}
+
+// The battle settings given on the command line replace those in `s`.
+void applyGivenSettings(const Options& o, Settings& s) {
+    const Settings& g = o.settings;
+    for (const std::string& a : o.givenSettings) {
+        if (a == "--size") s.width = g.width, s.height = g.height;
+        else if (a == "--preset") s.preset = g.preset;
+        else if (a == "--count") s.count = g.count;
+        else if (a == "--field-seed") s.fieldSeed = g.fieldSeed;
+        else if (a == "--budget") s.budget = g.budget;
+        else if (a == "--maxgen") s.maxGenerations = g.maxGenerations;
+        else if (a == "--variant") s.variant = g.variant;
+    }
+}
+
+struct SourceLeague {
+    std::string name;  // file name
+    std::vector<std::pair<std::string, std::string>> armies;
+};
+
+// Reads the leagues of --from, which must share their battle settings. A new
+// league or pool takes these settings, except the ones given on the command line.
+bool readSources(const Options& o, Settings& settings, std::vector<SourceLeague>& sources) {
+    std::stringstream list(o.from);
+    std::string path;
+    while (std::getline(list, path, ',')) {
+        LeagueFile file;
+        std::string error;
+        if (!readLeague(path, file, error)) {
+            std::fprintf(stderr, "%s\n", error.c_str());
+            return false;
+        }
+        if (sources.empty()) settings = file.settings;
+        else if (!sameSettings(settings, file.settings)) {
+            std::fprintf(stderr, "%s has other battle settings than the first league\n", path.c_str());
+            return false;
+        }
+        sources.push_back({std::filesystem::path(path).filename().string(), std::move(file.armies)});
+    }
+    applyGivenSettings(o, settings);
+    return true;
+}
+
+// The armies of the --from leagues as seeds, origin "ORIGIN (FILE)". Armies
+// with unknown pieces or outside the red zone are skipped. Armies over the
+// budget (bought under older prices) sell pieces until they fit, those that
+// hurt least against the Nash mixture of all source armies first (see
+// fitToBudget); "-pulsar" in the origin names a sold piece. Armies left empty
+// and copies of an earlier army are dropped.
+std::vector<Army> seedArmies(const Options& o, const Arena& arena, const std::vector<SourceLeague>& sources) {
+    const std::size_t n = sources.size();
+    std::vector<Army> armies;
+    std::vector<std::size_t> source;  // of every army
+    std::vector<int> invalid(n), copies(n), emptied(n), repaired(n), sold(n), points(n), kept(n);
+    std::vector<double> before(n), after(n);
+    std::unordered_set<std::string> keys;
+    for (std::size_t s = 0; s < n; ++s)
+        for (const auto& [origin, text] : sources[s].armies) {
+            Army a;
+            a.origin = origin + " (" + sources[s].name + ")";
+            if (!parsePieces(arena, text, a) || !arena.inZone(a)) ++invalid[s];
+            else if (!keys.insert(armyKey(arena, a)).second) ++copies[s];
+            else armies.push_back(std::move(a)), source.push_back(s);
+        }
+
+    bool over = false;
+    for (const Army& a : armies) over |= arena.cost(a) > arena.settings().budget;
+    if (over) {
+        const auto t0 = Clock::now();
+        const std::vector<Army> mixture = armies;
+        const auto meta = solveNash(payoffMatrix(arena, mixture, o.threads));
+        for (const Refit& f : fitToBudget(arena, armies, mixture, meta, o.threads)) {
+            const std::size_t s = source[static_cast<std::size_t>(f.army)];
+            Army& a = armies[static_cast<std::size_t>(f.army)];
+            ++repaired[s];
+            sold[s] += static_cast<int>(f.sold.size());
+            points[s] += f.points;
+            before[s] += f.before;
+            after[s] += f.after;
+            for (const auto& id : f.sold) a.origin += " -" + id;
+        }
+        std::printf("fitted the armies to the budget against their Nash mixture (support %d of %zu) in %.1fs\n",
+                    supportSize(meta), mixture.size(), secondsSince(t0));
+    }
+
+    std::vector<Army> seeds;
+    keys.clear();
+    for (std::size_t i = 0; i < armies.size(); ++i) {
+        const std::size_t s = source[i];
+        if (armies[i].pieces.empty()) ++emptied[s];
+        else if (!keys.insert(armyKey(arena, armies[i])).second) ++copies[s];
+        else seeds.push_back(std::move(armies[i])), ++kept[s];
+    }
+    for (std::size_t s = 0; s < n; ++s) {
+        std::printf("  %s: %zu armies, %d seeds", sources[s].name.c_str(), sources[s].armies.size(), kept[s]);
+        if (repaired[s])
+            std::printf("; %d over the budget sold %d pieces (%.1f points per army), score vs the mixture "
+                        "%+.3f -> %+.3f on average",
+                        repaired[s], sold[s], static_cast<double>(points[s]) / repaired[s], before[s] / repaired[s],
+                        after[s] / repaired[s]);
+        std::printf("; dropped %d empty, %d copies, %d invalid\n", emptied[s], copies[s], invalid[s]);
+    }
+    return seeds;
+}
+
 bool save(const std::string& path, const Arena& arena, const std::vector<Army>& armies,
           const std::vector<double>& meta, const Matrix& m, const std::string& extraJson = "") {
     std::string error;
@@ -381,15 +497,26 @@ int train(const Options& o) {
     Settings settings = o.settings;
     std::vector<std::pair<std::string, std::string>> raw;
     const bool resumed = loadLeague(o, settings, raw, true);
-    if (resumed && o.settingsGiven)
-        std::printf("note: %s exists, using its battle settings and ignoring the ones given\n", o.league.c_str());
+    if (resumed && (o.settingsGiven || !o.from.empty()))
+        std::printf("note: %s exists, continuing it and ignoring the settings / --from given\n", o.league.c_str());
+    const bool seeded = !resumed && !o.from.empty();
+    std::vector<SourceLeague> sources;
+    if (seeded && !readSources(o, settings, sources)) return 1;
 
     const Arena arena(settings);
-    std::vector<Army> parsed = parseArmies(arena, raw);
-    if (!resumed) std::printf("new league %s with %d random armies\n", o.league.c_str(), o.seeds);
-    else std::printf("resuming %s with %zu armies\n", o.league.c_str(), parsed.size());
-    LeagueTrainer league(arena, std::move(parsed), resumed, o.rng, o.seeds);
-    printSettings(arena, o.threads);
+    std::vector<Army> parsed;
+    if (seeded) {
+        std::printf("new league %s seeded from %s\n", o.league.c_str(), o.from.c_str());
+        printSettings(arena, o.threads);
+        parsed = seedArmies(o, arena, sources);
+    } else {
+        parsed = parseArmies(arena, raw);
+        if (!resumed) std::printf("new league %s with %d random armies\n", o.league.c_str(), o.seeds);
+        else std::printf("resuming %s with %zu armies\n", o.league.c_str(), parsed.size());
+        printSettings(arena, o.threads);
+    }
+    // A seeded league starts with its seeds alone (an empty one gets a random army).
+    LeagueTrainer league(arena, std::move(parsed), resumed, o.rng, seeded ? 0 : o.seeds);
     RunLog log;
     if (!openMatchLog(o, arena, log)) return 1;
 
@@ -490,14 +617,18 @@ int trainTwins(const Options& o) {
             return 1;
         }
         settings = fileA.settings;
-        if (o.settingsGiven)
-            std::printf("note: %s exists, using its battle settings and ignoring the ones given\n", dir.c_str());
+        if (o.settingsGiven || !o.from.empty())
+            std::printf("note: %s exists, continuing it and ignoring the settings / --from given\n", dir.c_str());
         if (readTextFile(statePath, text)) std::sscanf(text.c_str(), "iteration %d seconds %lf", &iteration, &secondsBefore);
         if (readTextFile(csvPath, text) && !parseEvaluationsCsv(text, history)) {
             std::fprintf(stderr, "cannot parse %s\n", csvPath.c_str());
             return 1;
         }
-    } else if (!fs::create_directories(dir, ec) && !fs::is_directory(dir, ec)) {
+    }
+    const bool seeded = !resumed && !o.from.empty();
+    std::vector<SourceLeague> sources;
+    if (seeded && !readSources(o, settings, sources)) return 1;
+    if (!resumed && !fs::create_directories(dir, ec) && !fs::is_directory(dir, ec)) {
         std::fprintf(stderr, "cannot create %s\n", dir.c_str());
         return 1;
     }
@@ -507,10 +638,15 @@ int trainTwins(const Options& o) {
     if (resumed)
         std::printf("resuming twin leagues in %s at iteration %d (A %zu, B %zu armies, %zu evaluations)\n", dir.c_str(),
                     iteration, armiesA.size(), armiesB.size(), history.size());
-    else
+    else if (seeded) {
+        // Both twins start from the same seeds; only their searches differ.
+        std::printf("new twin leagues in %s, both seeded from %s\n", dir.c_str(), o.from.c_str());
+        printSettings(arena, o.threads);
+        armiesA = armiesB = seedArmies(o, arena, sources);
+    } else
         std::printf("new twin leagues in %s with %d random armies each\n", dir.c_str(), o.seeds);
-    LeagueTrainer a(arena, std::move(armiesA), resumed, o.rng, o.seeds);
-    LeagueTrainer b(arena, std::move(armiesB), resumed, o.rng + kTwinSeedOffset, o.seeds);
+    LeagueTrainer a(arena, std::move(armiesA), resumed, o.rng, seeded ? 0 : o.seeds);
+    LeagueTrainer b(arena, std::move(armiesB), resumed, o.rng + kTwinSeedOffset, seeded ? 0 : o.seeds);
     const int maxIterations = o.iterationsGiven ? o.iterations : 1000;
     std::printf("search rng A %llu, B %llu; evaluation every %d iterations; stop at xA, xB < %.3f, or no drop of "
                 "%.3f in %d evaluations, or after %d iterations",
@@ -518,7 +654,7 @@ int trainTwins(const Options& o) {
                 o.evalEvery, o.rules.eps, o.rules.delta, o.rules.patience, maxIterations);
     if (o.maxHours > 0) std::printf(" or %.2f hours", o.maxHours);
     std::printf("\n");
-    printSettings(arena, o.threads);
+    if (!seeded) printSettings(arena, o.threads);
     RunLog log;
     if (!openMatchLog(o, arena, log)) return 1;
 
@@ -770,12 +906,6 @@ int raster(const Options& o) {
 // ---------------------------------------------------------------------------
 // pool
 // ---------------------------------------------------------------------------
-bool sameSettings(const Settings& a, const Settings& b) {
-    return a.width == b.width && a.height == b.height && a.preset == b.preset && a.count == b.count &&
-           a.fieldSeed == b.fieldSeed && a.budget == b.budget && a.maxGenerations == b.maxGenerations &&
-           a.variant == b.variant;
-}
-
 // FILE.state: the pool's bookkeeping and results table (armies in FILE's order).
 //   # life_arena pool state v2
 //   capacity 1000
@@ -835,34 +965,20 @@ int pool(const Options& o) {
     const bool resumed = loadLeague(o, settings, raw, true);
     if (resumed && (o.settingsGiven || !o.from.empty()))
         std::printf("note: %s exists, continuing it and ignoring the settings / --from given\n", o.league.c_str());
-    if (!resumed && !o.from.empty()) {
-        // Seed the pool with the armies of existing leagues, which must share their settings.
-        std::stringstream list(o.from);
-        std::string path;
-        bool first = true;
-        while (std::getline(list, path, ',')) {
-            LeagueFile file;
-            std::string error;
-            if (!readLeague(path, file, error)) {
-                std::fprintf(stderr, "%s\n", error.c_str());
-                return 1;
-            }
-            if (first) settings = file.settings;
-            else if (!sameSettings(settings, file.settings)) {
-                std::fprintf(stderr, "%s has other battle settings than the first league\n", path.c_str());
-                return 1;
-            }
-            first = false;
-            const std::string name = std::filesystem::path(path).filename().string();
-            for (auto& [origin, text] : file.armies) raw.emplace_back(origin + " (" + name + ")", text);
-        }
-    }
+    const bool seeded = !resumed && !o.from.empty();
+    std::vector<SourceLeague> sources;
+    if (seeded && !readSources(o, settings, sources)) return 1;
 
     const Arena arena(settings);
     Pool pool;
-    std::unordered_set<std::string> keys;
-    for (Army& a : parseArmies(arena, raw))
-        if (keys.insert(armyKey(arena, a)).second) pool.armies.push_back(std::move(a));
+    if (seeded) {
+        std::printf("seeding the pool from %s\n", o.from.c_str());
+        pool.armies = seedArmies(o, arena, sources);
+    } else {
+        std::unordered_set<std::string> keys;
+        for (Army& a : parseArmies(arena, raw))
+            if (keys.insert(armyKey(arena, a)).second) pool.armies.push_back(std::move(a));
+    }
     Rng rng(o.rng ^ (pool.armies.size() * 0x9e3779b97f4a7c15ull));
     if (!resumed && pool.armies.empty())
         for (int i = 0; i < o.seeds; ++i) pool.armies.push_back(arena.randomArmy(rng)), pool.armies.back().origin = "random";

@@ -261,6 +261,74 @@ std::vector<IterationResult> trainIteration(const std::vector<LeagueTrainer*>& l
 }
 
 // ---------------------------------------------------------------------------
+// Seeding with armies of older leagues
+// ---------------------------------------------------------------------------
+std::vector<Refit> fitToBudget(const Arena& arena, std::vector<Army>& armies, const std::vector<Army>& opponents,
+                               const std::vector<double>& weights, int threads) {
+    const int budget = arena.settings().budget;
+    // Expected scores of `list` against the mixture, played in one batch.
+    auto scores = [&](const std::vector<Army>& list) {
+        Matrix m(list.size(), std::vector<double>(opponents.size(), 0));
+        std::vector<MatchJob> jobs;
+        for (std::size_t i = 0; i < list.size(); ++i)
+            for (std::size_t j = 0; j < opponents.size(); ++j)
+                if (weights[j] > 0) jobs.push_back({&list[i], &opponents[j], &m[i][j], nullptr});
+        playJobs(arena, jobs, threads);
+        std::vector<double> out;
+        for (std::size_t i = 0; i < list.size(); ++i) out.push_back(expectedScore(m, static_cast<int>(i), weights));
+        return out;
+    };
+
+    std::vector<Refit> fits;
+    std::vector<Army> list;
+    for (std::size_t i = 0; i < armies.size(); ++i)
+        if (arena.cost(armies[i]) > budget) {
+            fits.emplace_back();
+            fits.back().army = static_cast<int>(i);
+            list.push_back(armies[i]);
+        }
+    const auto before = scores(list);
+    for (std::size_t k = 0; k < fits.size(); ++k) fits[k].before = fits[k].after = before[k];
+
+    // Every round sells one piece of each army still over the budget.
+    for (;;) {
+        std::vector<Army> candidates;
+        std::vector<std::pair<std::size_t, std::size_t>> sale;  // (refit, piece) of each candidate
+        for (std::size_t k = 0; k < fits.size(); ++k) {
+            const Army& a = armies[static_cast<std::size_t>(fits[k].army)];
+            const int cost = arena.cost(a);
+            if (cost <= budget) continue;
+            bool any = false;
+            for (const auto& p : a.pieces) any |= cost - arena.cost(p.item) <= budget;
+            for (std::size_t p = 0; p < a.pieces.size(); ++p) {
+                if (any && cost - arena.cost(a.pieces[p].item) > budget) continue;
+                candidates.push_back(a);
+                candidates.back().pieces.erase(candidates.back().pieces.begin() + static_cast<std::ptrdiff_t>(p));
+                sale.emplace_back(k, p);
+            }
+        }
+        if (candidates.empty()) break;
+        const auto s = scores(candidates);
+        std::vector<int> best(fits.size(), -1);
+        for (std::size_t c = 0; c < candidates.size(); ++c) {
+            int& b = best[sale[c].first];
+            if (b < 0 || s[c] >= s[static_cast<std::size_t>(b)]) b = static_cast<int>(c);  // ties: the later piece
+        }
+        for (std::size_t k = 0; k < fits.size(); ++k) {
+            if (best[k] < 0) continue;
+            const auto c = static_cast<std::size_t>(best[k]);
+            Army& a = armies[static_cast<std::size_t>(fits[k].army)];
+            const int item = a.pieces[sale[c].second].item;
+            fits[k].sold.push_back(arena.itemId(item));
+            fits[k].points += arena.cost(item);
+            fits[k].after = s[c];
+            a.pieces = std::move(candidates[c].pieces);
+        }
+    }
+    return fits;
+}
+
+// ---------------------------------------------------------------------------
 // Pool training
 // ---------------------------------------------------------------------------
 int Pool::weakest() const {

@@ -85,6 +85,8 @@ public:
     int cost(const Army& army) const;
     // Inside the red zone and within budget.
     bool legal(const Army& army) const;
+    // Inside the red zone, whatever it costs.
+    bool inZone(const Army& army) const;
     // Moves pieces back into the zone and drops random pieces until the budget fits.
     void repair(Army& army, Rng& rng) const;
 

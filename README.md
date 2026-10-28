@@ -334,6 +334,12 @@ Twin training answers "when is the league good enough?":
     --support 12 --pop 48 --gens 30 --max-hours 10
 ```
 
+`train --from A,B` (with or without `--twins`) seeds a new league with the
+armies of existing leagues, under their battle settings unless given. Armies
+that cost more than the budget, e.g. bought under the older prices before a
+piece cost exactly its cells, sell pieces until they fit: each time the piece
+whose sale hurts least against the Nash mixture of all source armies.
+
 ### Pool training (`pool`, experimental)
 
 League training searches every new army against the few strongest armies of

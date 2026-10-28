@@ -58,8 +58,9 @@ int Arena::cost(const Army& army) const {
     return sum;
 }
 
-bool Arena::legal(const Army& army) const {
-    if (cost(army) > settings_.budget) return false;
+bool Arena::legal(const Army& army) const { return cost(army) <= settings_.budget && inZone(army); }
+
+bool Arena::inZone(const Army& army) const {
     for (const auto& p : army.pieces) {
         const auto& s = shape(p);
         if (p.x < 0 || p.y < 0 || p.x + s.width > zones_.leftEnd || p.y + s.height > settings_.height) return false;

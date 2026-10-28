@@ -125,6 +125,25 @@ std::vector<IterationResult> trainIteration(const std::vector<LeagueTrainer*>& l
                                             int threads, const SearchProgress& progress = nullptr);
 
 // ---------------------------------------------------------------------------
+// Seeding with armies of older leagues
+// ---------------------------------------------------------------------------
+// Armies bought under other prices (or another budget) can cost more than the
+// budget. fitToBudget sells pieces of every such army, one at a time, until it
+// fits: each time the piece whose sale hurts least, i.e. leaves the best
+// expected score against the mixture (`opponents` with `weights`, normally the
+// Nash mixture of the source league). Only pieces whose sale alone makes the
+// army fit are candidates, unless there are none; then every piece is. Ties
+// sell the later piece. Battles are deterministic, and so is the result.
+struct Refit {
+    int army = 0;                   // index into the armies passed in
+    std::vector<std::string> sold;  // pattern ids of the sold pieces, in order
+    int points = 0;                 // their price
+    double before = 0, after = 0;   // score against the mixture before and after
+};
+std::vector<Refit> fitToBudget(const Arena& arena, std::vector<Army>& armies, const std::vector<Army>& opponents,
+                               const std::vector<double>& weights, int threads);
+
+// ---------------------------------------------------------------------------
 // Pool training
 // ---------------------------------------------------------------------------
 // A pool of at most `capacity` armies with the complete table of their
