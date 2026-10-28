@@ -49,7 +49,36 @@ const LEVELS = [
   {
     id: 'hive', name: 'Hive lattice', rules: LEAGUE_RULES,
     field: { preset: 'hive_lattice', count: 900, seed: 1 },
-    solo: { text: 'Break the grey beehive lattice and turn the field red.' },
+    solo: {
+      text: 'Break the grey beehive lattice and turn the field red.',
+      computer: {
+        score: 1012.5,
+        pieces: 'cell@12,2,r0,m0;cell@13,2,r0,m0;cell@11,3,r0,m0;cell@14,3,r0,m0;cell@12,4,r0,m0;cell@13,4,r0,m0;' +
+          'cell@10,5,r0,m0;cell@11,6,r0,m0;cell@9,7,r0,m0;cell@10,7,r0,m0;cell@11,7,r0,m0;cell@39,23,r0,m0;' +
+          'cell@40,23,r0,m0;cell@39,24,r0,m0;cell@41,24,r0,m0;cell@40,25,r0,m0;cell@28,33,r0,m0;' +
+          'cell@29,33,r0,m0;cell@0,34,r0,m0;cell@1,34,r0,m0;cell@7,34,r0,m0;cell@8,34,r0,m0;cell@28,34,r0,m0;' +
+          'cell@29,34,r0,m0;cell@0,35,r0,m0;cell@1,35,r0,m0;cell@7,35,r0,m0;cell@8,35,r0,m0;cell@4,37,r0,m0;' +
+          'cell@5,37,r0,m0;cell@4,38,r0,m0;cell@5,38,r0,m0;cell@22,43,r0,m0;cell@23,43,r0,m0;cell@25,43,r0,m0;' +
+          'cell@26,43,r0,m0;cell@21,44,r0,m0;cell@27,44,r0,m0;cell@21,45,r0,m0;cell@28,45,r0,m0;' +
+          'cell@31,45,r0,m0;cell@32,45,r0,m0;cell@21,46,r0,m0;cell@22,46,r0,m0;cell@23,46,r0,m0;' +
+          'cell@27,46,r0,m0;cell@32,46,r0,m0;cell@26,47,r0,m0;cell@18,54,r0,m0;cell@19,54,r0,m0;' +
+          'cell@18,55,r0,m0;cell@19,56,r0,m0;cell@20,56,r0,m0;cell@21,56,r0,m0;cell@16,57,r0,m0;' +
+          'cell@17,57,r0,m0;cell@20,57,r0,m0;cell@21,57,r0,m0;cell@18,58,r0,m0;cell@19,58,r0,m0;' +
+          'cell@18,59,r0,m0;cell@19,59,r0,m0;cell@15,60,r0,m0;cell@17,60,r0,m0;cell@20,60,r0,m0;' +
+          'cell@22,60,r0,m0;cell@15,61,r0,m0;cell@22,61,r0,m0;cell@15,63,r0,m0;cell@22,63,r0,m0;' +
+          'cell@16,64,r0,m0;cell@17,64,r0,m0;cell@20,64,r0,m0;cell@21,64,r0,m0;cell@18,65,r0,m0;' +
+          'cell@19,65,r0,m0;cell@20,65,r0,m0;cell@18,67,r0,m0;cell@19,67,r0,m0;cell@18,68,r0,m0;' +
+          'cell@19,68,r0,m0;cell@17,69,r0,m0;cell@18,69,r0,m0;cell@17,70,r0,m0;cell@15,71,r0,m0;' +
+          'cell@17,71,r0,m0;cell@15,72,r0,m0;cell@16,72,r0,m0;cell@4,93,r0,m0;cell@5,94,r0,m0;cell@9,94,r0,m0;' +
+          'cell@10,94,r0,m0;cell@3,95,r0,m0;cell@4,95,r0,m0;cell@7,95,r0,m0;cell@9,95,r0,m0;cell@7,97,r0,m0;' +
+          'cell@8,97,r0,m0;cell@7,98,r0,m0;cell@8,98,r0,m0;cell@36,116,r0,m0;cell@37,116,r0,m0;' +
+          'cell@36,117,r0,m0;cell@37,118,r0,m0;cell@38,118,r0,m0;cell@39,118,r0,m0;cell@39,119,r0,m0;' +
+          'cell@25,120,r0,m0;cell@26,120,r0,m0;cell@17,121,r0,m0;cell@18,121,r0,m0;cell@19,121,r0,m0;' +
+          'cell@25,121,r0,m0;cell@26,121,r0,m0;cell@17,122,r0,m0;cell@41,125,r0,m0;cell@36,127,r0,m0;' +
+          'cell@37,127,r0,m0;cell@38,127,r0,m0',
+        note: 'The board repeats at generation 15,489 (life_challenge --solo, 3 minutes of search).',
+      },
+    },
     challenge: {
       botName: 'Hive bot #103 (9.7% Nash)',
       // assets/leagues/hive-260x128.txt, army #103: the largest Nash weight.
@@ -114,7 +143,37 @@ const LEVELS = [
   {
     id: 'champion', name: 'Champion', rules: LEAGUE_RULES,
     field: { preset: 'empty', count: 900, seed: 1 },
-    solo: { text: 'The champion army stands in grey on Blue\'s side and comes at you. Make it red.', grey: CHAMPION },
+    solo: {
+      text: 'The champion army stands in grey on Blue\'s side and comes at you. Make it red.',
+      grey: CHAMPION,
+      computer: {
+        score: 1121.3,
+        pieces: 'cell@12,1,r0,m0;cell@22,7,r0,m0;cell@22,8,r0,m0;cell@22,9,r0,m0;cell@22,10,r0,m0;cell@21,11,r0,m0;' +
+          'cell@23,11,r0,m0;cell@36,11,r0,m0;cell@39,11,r0,m0;cell@22,12,r0,m0;cell@40,12,r0,m0;' +
+          'cell@22,13,r0,m0;cell@36,13,r0,m0;cell@40,13,r0,m0;cell@37,14,r0,m0;cell@38,14,r0,m0;' +
+          'cell@39,14,r0,m0;cell@40,14,r0,m0;cell@7,18,r0,m0;cell@6,19,r0,m0;cell@8,19,r0,m0;cell@6,20,r0,m0;' +
+          'cell@8,20,r0,m0;cell@7,21,r0,m0;cell@26,26,r0,m0;cell@47,29,r0,m0;cell@51,30,r0,m0;cell@45,31,r0,m0;' +
+          'cell@51,31,r0,m0;cell@16,32,r0,m0;cell@45,32,r0,m0;cell@46,32,r0,m0;cell@51,32,r0,m0;' +
+          'cell@14,33,r0,m0;cell@15,33,r0,m0;cell@16,33,r0,m0;cell@37,33,r0,m0;cell@38,33,r0,m0;' +
+          'cell@39,33,r0,m0;cell@40,33,r0,m0;cell@15,34,r0,m0;cell@37,34,r0,m0;cell@41,34,r0,m0;' +
+          'cell@37,35,r0,m0;cell@38,36,r0,m0;cell@18,37,r0,m0;cell@41,37,r0,m0;cell@15,40,r0,m0;' +
+          'cell@40,43,r0,m0;cell@43,43,r0,m0;cell@44,44,r0,m0;cell@31,45,r0,m0;cell@32,45,r0,m0;' +
+          'cell@40,45,r0,m0;cell@44,45,r0,m0;cell@31,46,r0,m0;cell@32,46,r0,m0;cell@41,46,r0,m0;' +
+          'cell@42,46,r0,m0;cell@43,46,r0,m0;cell@44,46,r0,m0;cell@34,48,r0,m0;cell@35,48,r0,m0;' +
+          'cell@34,49,r0,m0;cell@35,49,r0,m0;cell@34,60,r0,m0;cell@35,60,r0,m0;cell@36,60,r0,m0;' +
+          'cell@33,61,r0,m0;cell@36,61,r0,m0;cell@36,62,r0,m0;cell@32,63,r0,m0;cell@36,63,r0,m0;' +
+          'cell@32,64,r0,m0;cell@36,64,r0,m0;cell@36,65,r0,m0;cell@33,66,r0,m0;cell@35,66,r0,m0;' +
+          'cell@6,69,r0,m0;cell@6,70,r0,m0;cell@7,70,r0,m0;cell@8,70,r0,m0;cell@14,70,r0,m0;cell@11,71,r0,m0;' +
+          'cell@8,72,r0,m0;cell@9,72,r0,m0;cell@37,82,r0,m0;cell@38,82,r0,m0;cell@37,83,r0,m0;cell@38,83,r0,m0;' +
+          'cell@39,83,r0,m0;cell@39,84,r0,m0;cell@39,85,r0,m0;cell@40,85,r0,m0;cell@26,93,r0,m0;' +
+          'cell@26,94,r0,m0;cell@27,94,r0,m0;cell@36,99,r0,m0;cell@39,99,r0,m0;cell@6,100,r0,m0;' +
+          'cell@40,100,r0,m0;cell@6,101,r0,m0;cell@36,101,r0,m0;cell@40,101,r0,m0;cell@6,102,r0,m0;' +
+          'cell@37,102,r0,m0;cell@38,102,r0,m0;cell@39,102,r0,m0;cell@40,102,r0,m0;cell@22,119,r0,m0;' +
+          'cell@23,119,r0,m0;cell@24,119,r0,m0;cell@25,121,r0,m0;cell@44,123,r0,m0;cell@45,123,r0,m0;' +
+          'cell@43,124,r0,m0;cell@46,124,r0,m0;cell@44,125,r0,m0;cell@45,125,r0,m0',
+        note: 'The board repeats at generation 4,327 (life_challenge --solo, 3 minutes of search).',
+      },
+    },
     challenge: {
       text: 'The champion is the best army of our pool training on No man\'s land.',
       botName: 'the champion (+0.57 vs the open bot)',

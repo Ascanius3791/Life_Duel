@@ -437,6 +437,8 @@ fresh random armies. On *No man's land* it scored 950.7 within 90 seconds and
 then stopped improving: that is about the density of the debris any big
 chaotic reaction leaves behind (≈3.6% of the 208×128 cells that count), so
 beating it clearly would take engineered structures rather than luckier chaos.
+*Hive lattice* (1012.5) and *Champion* (1121.3) score a little higher in the
+same 3 minutes: there the grey cells feed the reaction.
 
 ```bash
 ./build/life_challenge --solo --level empty --minutes 3   # -> data/challenge/empty-solo.txt
