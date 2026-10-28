@@ -509,8 +509,7 @@ function onlineSetReady(owner) {
   if (owner !== mySide() || S.ready[owner] || S.phase !== 'prep') return;
   if (!onlineConnected() || !NET.round) return toast(NET.role === 'host' ? 'Wait until your friend has opened the link.' : 'Not connected yet.');
   if (NET.fieldRound !== NET.round) return toast('The battlefield is still loading.');
-  const army = S.placements.filter(p => p.owner === owner)
-    .map(p => ({ pattern: p.patternId, x: p.x, y: p.y, rot: p.rot || 0, mirror: !!p.mirror }));
+  const army = S.placements.filter(p => p.owner === owner).flatMap(placementPieces);
   if (!army.length && !confirm('You have not placed anything and would lose immediately. Lock in anyway?')) return;
   if (S.drag) endDrag();
   const salt = randomHex(16);

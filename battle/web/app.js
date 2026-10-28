@@ -158,6 +158,64 @@ function oriented(pattern, o) {
 }
 
 // ---------------------------------------------------------------------------
+// Advancing a pattern before it is placed: the player picks the phase (the
+// generation) of e.g. a gun. Evolved on an unbounded plane and normalised to
+// the bounding box, like gol::advanced(). An advanced pattern is placed as
+// single cells (see placementPieces()), so armies keep the plain format.
+// ---------------------------------------------------------------------------
+const MAX_ADVANCE = 1000;
+
+// One B3/S23 generation of `cells` ([[x, y]]) without any edges, normalised.
+function lifeStep(cells) {
+  if (!cells.length) return [];
+  const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
+  const w = Math.max(...xs) + 3, h = Math.max(...ys) + 3;  // one cell of margin on every side
+  const alive = new Uint8Array(w * h), count = new Uint8Array(w * h);
+  for (const [x, y] of cells) {
+    const i = (y + 1) * w + x + 1;
+    alive[i] = 1;
+    for (const d of [-w - 1, -w, -w + 1, -1, 1, w - 1, w, w + 1]) count[i + d]++;
+  }
+  const next = [];
+  for (let i = 0; i < w * h; i++) if (count[i] === 3 || (count[i] === 2 && alive[i])) next.push([i % w, Math.floor(i / w)]);
+  if (!next.length) return next;
+  const minX = Math.min(...next.map(c => c[0])), minY = Math.min(...next.map(c => c[1]));
+  return next.map(([x, y]) => [x - minX, y - minY]);
+}
+
+// `pattern` advanced by `gen` generations, as a pattern of its own (gen 0: the
+// pattern itself). Its cost is that of its cells bought one by one.
+const phaseCache = new Map();  // pattern id -> [pattern after 0, 1, 2, ... generations]
+function phased(pattern, gen) {
+  if (!gen) return pattern;
+  let list = phaseCache.get(pattern.id);
+  if (!list) phaseCache.set(pattern.id, list = [pattern]);
+  while (list.length <= gen) {
+    const cells = lifeStep(list[list.length - 1].cells);
+    const n = list.length;
+    list.push({
+      ...pattern, id: `${pattern.id}+${n}`, base: pattern, gen: n, cells, cost: cells.length * cellCost(),
+      width: cells.length ? Math.max(...cells.map(c => c[0])) + 1 : 0,
+      height: cells.length ? Math.max(...cells.map(c => c[1])) + 1 : 0,
+    });
+  }
+  return list[gen];
+}
+
+const cellCost = () => (S.arsenal.get('cell') || { cost: 1 }).cost;
+
+// The pattern being dragged, in the phase the player has chosen.
+function dragPattern() { return S.drag ? phased(S.drag.pattern, S.drag.gen) : null; }
+
+function changePhase(delta) {
+  const d = S.drag;
+  if (!d) return;
+  d.gen = Math.max(0, Math.min(MAX_ADVANCE, d.gen + delta));
+  S.dirty = true;
+  updateHint();
+}
+
+// ---------------------------------------------------------------------------
 // Placement bookkeeping
 // ---------------------------------------------------------------------------
 const spent = owner => S.placements.reduce((sum, p) => sum + (p.owner === owner ? p.cost : 0), 0);
@@ -203,11 +261,53 @@ function place(owner, pattern, shape, x, y) {
   const board = prepBoard();
   const own = OWNER_CELL[owner];
   const { w } = S.settings;
-  if (shape.cells.every(([cx, cy]) => board[(y + cy) * w + x + cx] === own)) return false;
-  S.placements.push({ id: S.nextId++, owner, patternId: pattern.id, cost: pattern.cost, x, y, w: shape.w, h: shape.h, cells: shape.cells, rot: shape.rot, mirror: shape.mirror });
+  if (!shape.cells.length || shape.cells.every(([cx, cy]) => board[(y + cy) * w + x + cx] === own)) return false;
+  // An advanced pattern that looks like its arsenal piece again (a still life,
+  // an oscillator after a full period, a spaceship) is placed as that piece.
+  const piece = pattern.base ? asPiece(pattern.base, shape.cells) : { pattern, rot: shape.rot, mirror: shape.mirror };
+  if (piece) {
+    S.placements.push({ id: S.nextId++, owner, patternId: piece.pattern.id, cost: piece.pattern.cost, x, y, w: shape.w, h: shape.h, cells: shape.cells, rot: piece.rot, mirror: piece.mirror });
+  } else {
+    S.placements.push(freePlacement(owner, `${pattern.name} +${pattern.gen}`, x, y, shape.cells));
+  }
   boardChanged();
   return true;
 }
+
+const cellsKey = cells => cells.map(c => `${c[0]},${c[1]}`).sort().join(' ');
+
+// `pattern` in the orientation whose cells are `cells` (normalised), or null.
+function asPiece(pattern, cells) {
+  if (pattern.cells.length !== cells.length) return null;
+  const key = cellsKey(cells);
+  for (const mirror of [false, true]) {
+    for (let rot = 0; rot < 4; rot++) {
+      if (cellsKey(oriented(pattern, { rot, mirror }).cells) === key) return { pattern, rot, mirror };
+    }
+  }
+  return null;
+}
+
+// A placement of loose cells: an advanced pattern, or a piece with cells
+// taken out. It costs its cells one by one, and an army stores it as `cell`
+// pieces (placementPieces()). (x, y) + cells need not be normalised.
+function freePlacement(owner, label, x, y, cells) {
+  const minX = Math.min(...cells.map(c => c[0])), minY = Math.min(...cells.map(c => c[1]));
+  cells = cells.map(([cx, cy]) => [cx - minX, cy - minY]);
+  return {
+    id: S.nextId++, owner, patternId: 'cell', free: true, label, cost: cells.length * cellCost(),
+    x: x + minX, y: y + minY, w: Math.max(...cells.map(c => c[0])) + 1, h: Math.max(...cells.map(c => c[1])) + 1,
+    cells, rot: 0, mirror: false,
+  };
+}
+
+// The pieces of the army format (pattern, x, y, rot, mirror) a placement stands for.
+function placementPieces(p) {
+  if (p.free) return p.cells.map(([cx, cy]) => ({ pattern: 'cell', x: p.x + cx, y: p.y + cy, rot: 0, mirror: false }));
+  return [{ pattern: p.patternId, x: p.x, y: p.y, rot: p.rot || 0, mirror: !!p.mirror }];
+}
+
+function placementName(p) { return p.free ? p.label : S.arsenal.get(p.patternId).name; }
 
 function placementAt(owner, cell) {
   for (let i = S.placements.length - 1; i >= 0; i--) {
@@ -221,6 +321,45 @@ function placementAt(owner, cell) {
 function removePlacement(p) {
   S.placements = S.placements.filter(q => q !== p);
   boardChanged();
+}
+
+// The topmost placement of `owner` with a living cell at `cell`, or null.
+function placementWithCell(owner, cell) {
+  for (let i = S.placements.length - 1; i >= 0; i--) {
+    const p = S.placements[i];
+    if (p.owner !== owner) continue;
+    if (p.cells.some(([cx, cy]) => p.x + cx === cell.x && p.y + cy === cell.y)) return p;
+  }
+  return null;
+}
+
+// Takes the single cell at `cell` out of placement `p`: the rest stays as
+// loose cells in its place, and exactly one cell's cost comes back.
+function removeCell(p, cell) {
+  const rest = p.cells.filter(([cx, cy]) => p.x + cx !== cell.x || p.y + cy !== cell.y);
+  if (rest.length === p.cells.length) return;
+  if (!rest.length) return removePlacement(p);
+  const label = p.free ? p.label : `${S.arsenal.get(p.patternId).name} (edited)`;
+  S.placements[S.placements.indexOf(p)] = freePlacement(p.owner, label, p.x, p.y, rest);
+  boardChanged();
+}
+
+// The placement and cell under the pointer that Ctrl+right-click (or X) would take out.
+function hoveredCell() {
+  if (S.phase !== 'prep' || S.drag || !S.pointer || !S.pointer.inside) return null;
+  for (const owner of ['red', 'blue']) {
+    if (!isActive(owner)) continue;
+    const p = placementWithCell(owner, S.pointer);
+    if (p) return { p, cell: { x: S.pointer.x, y: S.pointer.y } };
+  }
+  return null;
+}
+
+function removeHoveredCell() {
+  const h = hoveredCell();
+  if (h) removeCell(h.p, h.cell);
+  S.dirty = true;
+  updateHint();
 }
 
 // The board as placed so far, plus `extra` placements (the bot's army) that are not part of S.placements.
@@ -372,10 +511,10 @@ function drawFog(x, y, w, h, owner) {
 
 function renderPrepOverlay() {
   const { cs, ox, oy, dpr } = view;
-  const d = S.drag;
-  if (d && S.pointer && S.pointer.onCanvas) {
-    const shape = oriented(d.pattern, S.orient[d.owner]);
-    const target = placementFor(d.owner, shape, S.pointer, d.pattern.cost);
+  const d = S.drag, dp = dragPattern();
+  if (d && S.pointer && S.pointer.onCanvas && dp.cells.length) {
+    const shape = oriented(dp, S.orient[d.owner]);
+    const target = placementFor(d.owner, shape, S.pointer, dp.cost);
     ctx.save();
     ctx.globalAlpha = target.valid ? 0.75 : 0.45;
     ctx.fillStyle = target.valid ? COLOR[d.owner] : '#ffffff';
@@ -388,6 +527,19 @@ function renderPrepOverlay() {
     ctx.setLineDash(target.valid ? [] : [4 * dpr, 4 * dpr]);
     ctx.strokeStyle = target.valid ? COLOR[d.owner] : '#ff6b6b';
     ctx.strokeRect(ox + target.x * cs - 2 * dpr, oy + target.y * cs - 2 * dpr, shape.w * cs + 4 * dpr, shape.h * cs + 4 * dpr);
+    if (dp.gen) {
+      // The chosen phase next to the preview.
+      ctx.setLineDash([]);
+      ctx.font = `${Math.round(12 * dpr)}px system-ui, sans-serif`;
+      ctx.textBaseline = 'bottom';
+      const label = `+${dp.gen} gen · ${dp.cells.length} cells · ${dp.cost} pts`;
+      const lx = ox + target.x * cs, ly = Math.max(14 * dpr, oy + target.y * cs - 5 * dpr);
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.strokeText(label, lx, ly);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, lx, ly);
+    }
     ctx.restore();
     return;
   }
@@ -398,6 +550,13 @@ function renderPrepOverlay() {
     ctx.lineWidth = 1.5 * dpr;
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
     ctx.strokeRect(ox + hover.x * cs - 2 * dpr, oy + hover.y * cs - 2 * dpr, hover.w * cs + 4 * dpr, hover.h * cs + 4 * dpr);
+    const h = hoveredCell();
+    if (h && cs >= 3) {
+      // The cell Ctrl+right-click or X would take out.
+      ctx.setLineDash([]);
+      ctx.lineWidth = Math.max(1, dpr);
+      ctx.strokeRect(ox + h.cell.x * cs, oy + h.cell.y * cs, cs, cs);
+    }
     ctx.restore();
   }
 }
@@ -417,8 +576,15 @@ function updateHint() {
   let text = '';
   if (S.phase === 'prep') {
     const hover = hoveredPlacement();
-    if (S.drag) text = 'R / Shift+R rotate · F mirror · V flip · wheel rotates · Esc or right-click to stop';
-    else if (hover) text = `Right-click to remove ${S.arsenal.get(hover.patternId).name} (+${hover.cost} pts)`;
+    const dp = dragPattern();
+    if (S.drag) {
+      text = 'R / Shift+R rotate · F mirror · V flip · Comma / Period: generation −/+ (Shift ×10) · wheel rotates · Esc or right-click to stop';
+      if (dp.gen) text = `${dp.name} at generation +${dp.gen}: ${dp.cells.length ? `${dp.cells.length} cells, ${dp.cost} pts` : 'died out'} · ${text}`;
+    } else if (hover) {
+      text = `Right-click to remove ${placementName(hover)} (+${hover.cost} pts)`;
+      const h = hoveredCell();
+      if (h && h.p.cells.length > 1) text += ` · Ctrl+right-click or X removes just this cell (+${cellCost()} pt${cellCost() === 1 ? '' : 's'})`;
+    }
   }
   el.textContent = text;
   el.classList.toggle('show', !!text);
@@ -692,7 +858,7 @@ function onCardDown(e, owner, pattern, card) {
     endDrag();
     return;
   }
-  S.drag = { owner, pattern, card, sticky: false, moved: false, startX: e.clientX, startY: e.clientY };
+  S.drag = { owner, pattern, gen: 0, card, sticky: false, moved: false, startX: e.clientX, startY: e.clientY };
   updateSides();
   updateHint();
 }
@@ -707,13 +873,18 @@ function endDrag() {
 function tryPlaceAtPointer() {
   const d = S.drag;
   if (!d || !S.pointer || !S.pointer.onCanvas) return false;
-  const shape = oriented(d.pattern, S.orient[d.owner]);
-  const target = placementFor(d.owner, shape, S.pointer, d.pattern.cost);
+  const dp = dragPattern();
+  if (!dp.cells.length) {
+    toast(`${dp.name} has died out by generation +${dp.gen}.`);
+    return false;
+  }
+  const shape = oriented(dp, S.orient[d.owner]);
+  const target = placementFor(d.owner, shape, S.pointer, dp.cost);
   if (!target.valid) {
     if (!target.affordable) toast('Not enough points left.');
     return false;
   }
-  return place(d.owner, d.pattern, shape, target.x, target.y);
+  return place(d.owner, dp, shape, target.x, target.y);
 }
 
 function pointerCell(e) {
@@ -732,7 +903,7 @@ document.addEventListener('pointermove', e => {
   const d = S.drag;
   if (d && !d.moved && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 6) d.moved = true;
   // Painting single cells while holding the button in click-to-place mode.
-  if (d && d.sticky && d.pattern.id === 'cell' && (e.buttons & 1) && changed) tryPlaceAtPointer();
+  if (d && d.sticky && d.pattern.id === 'cell' && !d.gen && (e.buttons & 1) && changed) tryPlaceAtPointer();
   if (changed) {
     S.dirty = true;
     updateHint();
@@ -756,6 +927,7 @@ canvas.addEventListener('pointerdown', e => {
   S.pointer = pointerCell(e);
   if (e.button === 2) {
     if (S.drag) return endDrag();
+    if (e.ctrlKey || e.metaKey) return removeHoveredCell();  // just the cell under the pointer
     const p = hoveredPlacement();
     if (p) removePlacement(p);
     updateHint();
@@ -763,7 +935,7 @@ canvas.addEventListener('pointerdown', e => {
   }
   if (e.button === 0 && S.drag && S.drag.sticky) {
     tryPlaceAtPointer();
-    if (S.drag.pattern.cost > remaining(S.drag.owner)) endDrag();
+    if (dragPattern().cost > remaining(S.drag.owner)) endDrag();
   }
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1902,6 +2074,9 @@ function onKey(e) {
     else if (key === 'r' || key === 'R') changeOrientation(focusOwner(), e.shiftKey ? 'rotl' : 'rotr');
     else if (isF) changeOrientation(focusOwner(), 'mirror');
     else if (key === 'v' || key === 'V') changeOrientation(focusOwner(), 'vflip');
+    // , and . by their position on the keyboard, so Shift (×10) works on every layout.
+    else if (S.drag && (e.code === 'Period' || e.code === 'Comma')) changePhase((e.code === 'Period' ? 1 : -1) * (e.shiftKey ? 10 : 1));
+    else if ((key === 'x' || key === 'X') && !e.ctrlKey && !e.metaKey && hoveredCell()) removeHoveredCell();
     else if ((e.ctrlKey || e.metaKey) && key === 'z') { const o = focusOwner(); if (o) onSideAction(o, 'undo'); }
     else return;
     e.preventDefault();

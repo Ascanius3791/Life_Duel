@@ -103,8 +103,7 @@ function makeArmy(name, pieces, zw, h, extra = {}) {
 
 // What `owner` has placed so far, as an army (null if nothing).
 function sideArmy(owner, name = '') {
-  const list = S.placements.filter(p => p.owner === owner)
-    .map(p => ({ pattern: p.patternId, x: p.x, y: p.y, rot: p.rot || 0, mirror: !!p.mirror }));
+  const list = S.placements.filter(p => p.owner === owner).flatMap(placementPieces);
   if (!list.length) return null;
   return makeArmy(name, toRedFrame(list, owner, S.settings.w), zones().zw, S.settings.h);
 }

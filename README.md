@@ -7,6 +7,7 @@ Two programs that share one C++ simulation core:
 | `life_classic` | Conway's Game of Life with a native GUI (SFML): draw, place well-known patterns, continuous speed control and a max-speed mode. |
 | `life_battle` | **Life Duel**, a red-vs-blue 1v1 played in the browser. A small built-in HTTP server runs the simulation in C++, and the browser handles placement and rendering. |
 | `life_arena` | Trains Life Duel bots by self-play on one fixed battlefield (command line, no GUI). |
+| `life_challenge` | Lets the computer attack a Challenge level: the fewest red cells that beat its bot. |
 
 Life Duel also runs without any server, as a static web site: the same C++
 engine compiled to WebAssembly. That is how it is published on GitHub Pages and
@@ -39,6 +40,26 @@ configure with `-DGOL_NATIVE=OFF`.
 ./build/life_battle                     # serves http://127.0.0.1:8080/ and opens the browser
 ./build/life_battle --port 9000 --host 0.0.0.0 --no-browser   # e.g. play from another device in the LAN
 ```
+
+### Placing an army
+
+All controls are in [RULES.md](RULES.md#6-controls-browser). Two of them shape
+an army cell by cell:
+
+- **Choosing the phase:** while a pattern is selected (dragged or clicked, not
+  yet on the board), `,` and `.` step it one generation back and forward
+  (`Shift`: 10, up to 1000). It evolves on its own, on an unbounded plane, and
+  the preview shows the generation, its living cells and its price. So a gun
+  can be placed already running, or a methuselah halfway through. A piece costs
+  exactly its living cells, so an advanced pattern is placed as single cells
+  (`cell` pieces): armies keep their format everywhere (saved and published
+  armies, army codes, online play, league files). If the advanced pattern is
+  the arsenal piece again (a still life, an oscillator or spaceship after a
+  full period), it is placed as that piece.
+- **Taking cells out:** right-click removes a placed pattern as a whole;
+  `Ctrl+right-click` (or pointing at the cell and pressing `X`) removes just the
+  cell under the pointer. The rest of the pattern stays as single cells and one
+  cell's points come back.
 
 ### Playing against the bot
 
@@ -110,6 +131,10 @@ your record back on the board.
   spent break ties). The bots: the army with the largest Nash weight of the
   Hive league and of the open league, and on *Champion* the champion itself
   (they were trained with a 2000 generation limit and all cells counted).
+  Where the computer has attacked a level (see
+  [`life_challenge`](#exploiting-the-challenges-life_challenge)), the level
+  text says how few cells it needed and **Computer's army** puts its army on
+  the board. A win with exactly that army is not stored as your record.
 
 New levels are entries of `LEVELS` in `battle/web/levels.js` (armies written as
 in a league file). The battle runs with `solo=1` (see the API below), so a board
@@ -200,6 +225,7 @@ every push to `main` and deploys `dist/` to GitHub Pages. In the repository's
 |---|---|
 | Left drag / right drag | draw / erase cells |
 | Click a pattern in the list, then left-click | stamp it (`R` rotate, `F` flip, right-click or `Esc` to stop) |
+| `,` / `.` while a pattern is selected | step it a generation back / forward before stamping (`Shift`: 10; evolved without edges, the preview shows the generation and its cells) |
 | Mouse wheel, middle drag, arrow keys | zoom, pan |
 | `Space`, `N`, `C`, `X` | play/pause, step, clear, randomize |
 | Speed slider, `+`/`−` | 1–500 generations per second (logarithmic) |
@@ -364,6 +390,48 @@ generation, how often the best candidate survives a pre-selection of the top
 quarter, and how near-identical armies are told apart. Logs go to `data/`,
 which is not committed.
 
+## Exploiting the challenges (`life_challenge`)
+
+How few red cells does it take to beat a Challenge bot? `life_challenge` plays
+the level exactly like the browser does (same board, bot, Birthright, no
+generation limit, home cells not counted; one deterministic battle decides) and
+searches over sets of red cells, since cells are what the record counts and any
+set can be drawn. It never sees the records players set.
+
+```bash
+./build/life_challenge --level hive --minutes 2           # stochastic search -> data/challenge/hive.txt
+./build/life_challenge --level hive --exhaustive 4        # every army of up to 4 cells
+./build/life_challenge --level hive --verify 'cell@46,65,r0,m0;...'   # one army, both engines
+./build/life_challenge --level hive --verify '...' --vs-league assets/leagues/hive-260x128.txt   # against the whole league
+```
+
+- **Search**: random armies of arsenal pieces until some win, then an archive of
+  winners per cell count is mutated, mostly towards fewer cells (delete a
+  cell or a cluster, two cells for one, a cluster for a smaller pattern) but
+  also sideways (move a cell, shift a cluster or the army) because the game is
+  chaotic: a same-size neighbour of a winner is often where the next smaller
+  winner is. Every new record gets a sweep over all its single-cell deletions.
+- **Exhaustive**: cells more than 2 apart from all others in groups of one or
+  two die at once without effect, and larger groups first evolve as if alone,
+  so checking every *linked* group (cells at most 2 apart) of up to K cells at
+  every position covers all armies of up to K cells. Placements that look the
+  same after 30 generations while still far from everything else play the same
+  battle, which brings ~21 million placements down to ~78,000 battles.
+
+The output lists the winners with their LD1 army code (import under **Armies →
+My armies**). Battles still running after `--cap` generations (30000) count as
+lost; none did on the Hive.
+
+**Hive lattice**: the search found a 5-cell winner within 30 seconds
+(about 9,000 battles). The exhaustive check shows that no army of 3 or 4
+cells wins (and 1 or 2 cells die at once), so **5 cells is the minimum**.
+It is a pure exploit of that one bot: against the rest of the Hive league it
+loses every army with a Nash weight except #103 (9.7% of the mixture under
+Challenge rules, 0% and a payoff of −0.84 under the league's own rules).
+*No man's land* and *Champion* fall to a single blinker (3 cells, the least
+any army can have) in a well-chosen spot, found within seconds: those bots
+are chaotic enough that the smallest nudge tips the outcome.
+
 ## Layout
 
 ```
@@ -383,6 +451,7 @@ battle/     life_battle: HTTP server + JSON API (api_json.* is shared with the W
 tools/      build_site.sh: WebAssembly build + static site in dist/
 .github/workflows/pages.yml   CI: native build + tests, static site, GitHub Pages deploy
 arena/      life_arena: armies, mutation, matches, Nash solver, league and twin training
+  challenge.cpp  life_challenge: fewest cells that beat a Challenge bot (search and exhaustive check)
 tests/      core_tests, arena_tests; web/ browser tests (Playwright scripts, usage in their headers)
 assets/     DejaVu fonts for the native GUI, leagues/ with the bot for vs Bot mode
 ```

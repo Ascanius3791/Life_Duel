@@ -167,6 +167,7 @@
       <div class="level-prep" id="levelPrep" hidden>
         <select id="levelSelect" aria-label="Level" title="The levels with your record on each (saved in this browser)"></select>
         <button class="ghost small" id="btnLevelBest" title="Put the army of your record on the board">Best army</button>
+        <button class="ghost small" id="btnLevelComputer" title="Put the computer's best army on the board" hidden>Computer's army</button>
         <p class="muted preset-desc" id="levelDesc"></p>
       </div>
       <!-- Online: connection to the friend, the invitation link -->
@@ -353,7 +354,8 @@
         <ul>
           <li><b>Drag</b> a card onto your area, or <b>click</b> a card and then click the board repeatedly. <b>Esc</b> or right-click stops placing.</li>
           <li><b>R</b> / <b>Shift+R</b> rotate, <b>F</b> mirror left/right, <b>V</b> mirror up/down. The mouse wheel rotates while placing.</li>
-          <li><b>Right-click</b> a placed pattern to remove it and get the points back.</li>
+          <li><b>,</b> / <b>.</b> while placing step the pattern back / forward one generation (<b>Shift</b>: 10), so you choose its phase, e.g. how far a gun has got. It is then placed as single cells.</li>
+          <li><b>Right-click</b> a placed pattern to remove it and get the points back. <b>Ctrl+right-click</b> (or <b>X</b>) removes just the cell under the pointer.</li>
           <li><b>A</b> folds the arsenal away or brings it back.</li>
           <li><b>vs Bot</b> (top left): play one side against a trained bot. It picks its army in secret before you place yours.</li>
           <li><b>Watch</b>: two armies of a bot league fight. Each side is drawn at random from the league, or picked: ◀ ▶ step through all armies, yours included.</li>

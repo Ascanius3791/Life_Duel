@@ -40,7 +40,9 @@ const CHAMPION = 'acorn@36,6,r0,m1;mwss@46,5,r2,m1;block@41,36,r3,m0;mwss@43,43,
 
 // Each level: a battlefield, its rules, and what it holds in each mode.
 //   solo:      { text, grey? }  grey: an army that stands in grey where Blue's would
-//   challenge: { text?, bot, botName }  bot: Blue's army (mirror image of these pieces)
+//   challenge: { text?, bot, botName, computer? }  bot: Blue's army (mirror image of these pieces)
+//              computer: { pieces, note }  the fewest cells the computer won with (life_challenge,
+//              data/challenge/<id>.txt); it searched from random armies, without the players' records
 // Records are kept per mode and level id: give a level a new id when it changes.
 const LEVELS = [
   {
@@ -54,6 +56,11 @@ const LEVELS = [
         'r_pentomino@36,41,r3,m1;beehive@5,99,r0,m0;r_pentomino@49,49,r0,m1;beehive@42,77,r0,m1;beehive@1,76,r2,m1;' +
         'blinker@44,90,r1,m1;cell@49,69,r1,m1;beehive@17,69,r2,m0;cell@20,80,r2,m0;gosper_gun@28,88,r3,m0;' +
         'cell@47,107,r2,m0;pulsar@1,112,r2,m0;cell@27,121,r2,m1;glider@39,16,r3,m0;cell@5,54,r2,m0',
+      computer: {
+        pieces: 'cell@46,65,r0,m0;cell@45,66,r0,m0;cell@46,66,r0,m0;cell@47,66,r0,m0;cell@47,67,r0,m0',
+        note: 'Wins 335 to 264 when the board repeats at generation 5,947. No army of 3 or 4 cells beats this bot: ' +
+          'the computer played all of them (life_challenge --exhaustive 4).',
+      },
     },
   },
   {
@@ -66,6 +73,11 @@ const LEVELS = [
       bot: 'acorn@36,6,r0,m1;mwss@44,8,r2,m1;acorn@30,51,r0,m1;cell@22,56,r1,m0;cell@21,33,r1,m1;acorn@17,15,r1,m0;' +
         'blinker@11,36,r2,m1;hwss@25,65,r2,m1;mwss@46,76,r2,m0;glider@23,95,r1,m0;beehive@18,103,r3,m0;' +
         'cell@21,103,r0,m1;hwss@42,119,r2,m1;acorn@45,110,r2,m0',
+      computer: {
+        pieces: 'cell@36,118,r0,m0;cell@36,119,r0,m0;cell@36,120,r0,m0',
+        note: 'A single blinker wins 431.5 to 219 when the board repeats at generation 4,610. ' +
+          'Fewer cells cannot win: 1 or 2 cells die at once.',
+      },
     },
   },
   {
@@ -76,6 +88,11 @@ const LEVELS = [
       text: 'The champion is the best army of our pool training on No man\'s land.',
       botName: 'the champion (+0.57 vs the open bot)',
       bot: CHAMPION,
+      computer: {
+        pieces: 'cell@38,85,r0,m0;cell@38,86,r0,m0;cell@38,87,r0,m0',
+        note: 'A single blinker wins 355 to 263.3 when the board repeats at generation 3,228. ' +
+          'Fewer cells cannot win: 1 or 2 cells die at once.',
+      },
     },
   },
 ];
@@ -192,17 +209,44 @@ function levelRun() {
   return { cells, cost: spent('red'), pieces: army ? army.pieces : [] };
 }
 
-function loadBestArmy() {
-  const record = levelRecord(S.mode, currentLevel());
-  if (!record || !Array.isArray(record.pieces) || S.phase !== 'prep') return;
-  if (armyShapeProblem(record.pieces, zones().zw, S.settings.h)) return toast('The record army does not fit this board.');
+// Replaces Red's placements by `pieces` (Red's frame).
+function loadLevelArmy(pieces, what) {
+  if (S.phase !== 'prep') return;
+  if (armyShapeProblem(pieces, zones().zw, S.settings.h)) return toast(`${what} does not fit this board.`);
   if (S.drag) endDrag();
   S.placements = S.placements.filter(p => p.owner !== 'red')
-    .concat(botPlacements(record.pieces, 'red').map(p => ({ ...p, id: S.nextId++ })));
+    .concat(botPlacements(pieces, 'red').map(p => ({ ...p, id: S.nextId++ })));
   S.ready.red = false;
   S.open = 'red';
   boardChanged();
-  toast('Loaded the army of your record.');
+  toast(`Loaded ${what}.`);
+}
+
+function loadBestArmy() {
+  const record = levelRecord(S.mode, currentLevel());
+  if (!record || !Array.isArray(record.pieces)) return;
+  loadLevelArmy(record.pieces, 'the army of your record');
+}
+
+// The computer's best army of a Challenge level: { pieces, cells } or null.
+function computerArmy(level) {
+  const c = level.challenge && level.challenge.computer;
+  if (!c) return null;
+  const pieces = parsePieces(c.pieces);
+  let cells = 0;
+  for (const p of pieces) {
+    const pattern = S.arsenal.get(p.pattern);
+    if (pattern) cells += pattern.cells.length;
+  }
+  return { pieces, cells, note: c.note };
+}
+
+// Same pieces, in any order.
+const piecesKey = pieces => pieces.map(p => `${p.pattern}@${p.x},${p.y},${p.rot & 3},${p.mirror ? 1 : 0}`).sort().join(';');
+
+function loadComputerArmy() {
+  const c = computerArmy(currentLevel());
+  if (c) loadLevelArmy(c.pieces, `the computer's army (${fmt(c.cells)} cells)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -219,9 +263,14 @@ function updateLevelUi() {
   $('#btnLevelBest').disabled = !(record && Array.isArray(record.pieces) && record.pieces.length) || S.phase !== 'prep';
   $('#btnLevelBest').title = record ? `Put the army of your record on the board (${recordText(mode, record)}${record.when ? `, ${record.when}` : ''})`
     : 'Your record army will be kept here';
-  const rules = mode === 'solo'
+  const computer = mode === 'challenge' ? computerArmy(level) : null;
+  $('#btnLevelComputer').hidden = !computer;
+  $('#btnLevelComputer').disabled = S.phase !== 'prep';
+  if (computer) $('#btnLevelComputer').title = `Put the computer's best army on the board: ${fmt(computer.cells)} cells. ${computer.note}`;
+  let rules = mode === 'solo'
     ? 'Score: red cells outside your area when the board repeats (no generation limit).'
     : `Beat ${level.challenge.botName} with as few red cells as you can (no generation limit, home cells don't count).`;
+  if (computer) rules += ` The computer won with ${fmt(computer.cells)} cells.`;
   $('#levelDesc').textContent = level[mode].text ? `${level[mode].text} ${rules}` : rules;
   $('#levelDesc').title = $('#levelDesc').textContent;
 }
@@ -262,13 +311,18 @@ function levelResult(frame) {
   } else {
     const run = b.level.run;
     const won = frame.winner === 'red';
-    const better = won && isBetter(mode, run, best);
+    const computer = computerArmy(level);
+    // The computer's army itself is not a record of yours.
+    const borrowed = !!computer && piecesKey(run.pieces) === piecesKey(computer.pieces);
+    const better = won && !borrowed && isBetter(mode, run, best);
     if (better) storeRecord(mode, level, run);
     const used = `${fmt(run.cells)} cells (${run.cost} pts)`;
-    if (better) line = `Won with ${used} — new record on ${level.name}!${best ? ` Before: ${fmt(best.cells)} cells (${best.cost} pts).` : ''}`;
+    if (borrowed) line = `The computer's army ${won ? 'won' : 'did not win'} with ${used}. It does not count as your record.`;
+    else if (better) line = `Won with ${used} — new record on ${level.name}!${best ? ` Before: ${fmt(best.cells)} cells (${best.cost} pts).` : ''}`;
     else if (won) line = `Won with ${used}. Your record: ${fmt(best.cells)} cells (${best.cost} pts).`;
     else line = `You used ${used}. ${best ? `Your record: ${fmt(best.cells)} cells (${best.cost} pts).` : 'Not beaten yet: beat the bot to set a record.'}`;
     line += ` The bot: ${level.challenge.botName}.`;
+    if (computer && !borrowed) line += ` The computer's best: ${fmt(computer.cells)} cells.`;
   }
   $('#resultLevel').hidden = false;
   $('#resultLevel').textContent = line;
@@ -278,4 +332,5 @@ function levelResult(frame) {
 function wireLevels() {
   $('#levelSelect').addEventListener('change', e => useLevel(e.target.value, S.mode));
   $('#btnLevelBest').addEventListener('click', loadBestArmy);
+  $('#btnLevelComputer').addEventListener('click', loadComputerArmy);
 }

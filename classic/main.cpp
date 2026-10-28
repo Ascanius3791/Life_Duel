@@ -22,6 +22,7 @@ namespace {
 constexpr float kSidebarWidth = 330.f;
 constexpr float kSpeedMin = 1.f;
 constexpr float kSpeedMax = 500.f;
+constexpr int kMaxAdvance = 1000;  // how far a pattern can be advanced before stamping it
 
 std::string findAsset(const char* argv0, const std::string& name) {
     std::string exeDir = argv0;
@@ -82,7 +83,7 @@ public:
     void screenshot(const std::string& path) {
         running_ = true;
         for (int i = 0; i < 40; ++i) grid_.step();
-        selected_ = static_cast<int>(std::distance(gol::patternLibrary().data(), gol::findPattern("gosper_gun")));
+        select(static_cast<int>(std::distance(gol::patternLibrary().data(), gol::findPattern("gosper_gun"))));
         ui_.handleEvent(mouseMoved(420, 300));
         for (int i = 0; i < 3; ++i) {
             ui_.beginFrame();
@@ -146,7 +147,26 @@ private:
         return selected_ >= 0 ? &gol::patternLibrary()[static_cast<std::size_t>(selected_)] : nullptr;
     }
 
-    gol::Pattern currentShape() const { return gol::transformed(*selectedPattern(), rotation_, mirror_); }
+    // Selects a library pattern (-1: none). The phase always starts at generation 0.
+    void select(int index) {
+        selected_ = index;
+        phases_.clear();
+        advance_ = 0;
+    }
+
+    // The selected pattern advanced by `advance_` generations on an unbounded
+    // plane. Every phase computed so far is kept, so stepping back is free.
+    const gol::Pattern& advancedPattern() {
+        if (phases_.empty()) phases_.push_back(*selectedPattern());
+        while (static_cast<int>(phases_.size()) <= advance_) phases_.push_back(gol::advanced(phases_.back(), 1));
+        return phases_[static_cast<std::size_t>(advance_)];
+    }
+
+    void stepPhase(int delta) {
+        if (selectedPattern()) advance_ = std::clamp(advance_ + delta, 0, kMaxAdvance);
+    }
+
+    gol::Pattern currentShape() { return gol::transformed(advancedPattern(), rotation_, mirror_); }
 
     void stamp(sf::Vector2i cell) {
         const gol::Pattern shape = currentShape();
@@ -200,7 +220,7 @@ private:
                         paintLine(lastPaint_, lastPaint_, true);
                     }
                 } else if (e.mouseButton.button == sf::Mouse::Right) {
-                    if (selectedPattern()) selected_ = -1;
+                    if (selectedPattern()) select(-1);
                     else {
                         painting_ = -1;
                         lastPaint_ = cellAt(mouse);
@@ -243,7 +263,9 @@ private:
             case K::G: showGrid_ = !showGrid_; break;
             case K::M: maxSpeed_ = !maxSpeed_; break;
             case K::Home: case K::Num0: fitView(); break;
-            case K::Escape: selected_ = -1; break;
+            case K::Escape: select(-1); break;
+            case K::Period: stepPhase(k.shift ? 10 : 1); break;
+            case K::Comma: stepPhase(k.shift ? -10 : -1); break;
             case K::Add: case K::Equal: setSpeedT(speedT_ + 0.05f); break;
             case K::Subtract: case K::Hyphen: setSpeedT(speedT_ - 0.05f); break;
             case K::Left: offset_.x += 40.f; break;
@@ -374,6 +396,12 @@ private:
             box.setOutlineColor(sf::Color(255, 209, 102, 160));
             box.setOutlineThickness(1.f);
             window_.draw(box);
+            if (advance_ > 0) {
+                const std::string label = shape.cells.empty()
+                    ? "+" + std::to_string(advance_) + " gen: died out"
+                    : "+" + std::to_string(advance_) + " gen  \xC2\xB7  " + std::to_string(shape.cells.size()) + " cells";
+                ui_.text({offset_.x + px0 * cs, offset_.y + py0 * cs - 20.f}, label, 12, sf::Color(255, 209, 102));
+            }
         }
     }
 
@@ -457,12 +485,21 @@ private:
         // Pattern library
         ui_.text({x, y}, "PATTERNS", 11, muted, true);
         if (selectedPattern()) {
-            const char* hint = "R rotate  \xC2\xB7  F flip";
+            const char* hint = "R rotate  \xC2\xB7  F flip  \xC2\xB7  , . phase";
             ui_.text({x + W - ui_.textWidth(hint, 11), y}, hint, 11, muted);
         }
         y += 20.f;
 
-        const float footer = selectedPattern() ? 160.f : 112.f;
+        std::vector<std::string> about;  // the selected pattern's description and its phase
+        if (const gol::Pattern* p = selectedPattern()) {
+            about = wrap(p->description, W - 20.f, 12);
+            const gol::Pattern& phase = advancedPattern();
+            about.push_back(advance_ == 0 ? "Generation 0, " + std::to_string(phase.cells.size()) + " cells  \xC2\xB7  , / . advance"
+                            : phase.cells.empty() ? "Generation +" + std::to_string(advance_) + ": died out"
+                            : "Generation +" + std::to_string(advance_) + ", " + std::to_string(phase.cells.size()) +
+                                  " cells  \xC2\xB7  Shift: x10");
+        }
+        const float footer = 112.f + (about.empty() ? 0.f : 22.f + 16.f * about.size());
         listRect_ = {x, y, W, std::max(60.f, H - y - footer)};
         const auto& library = gol::patternLibrary();
         const float rowH = 28.f;
@@ -473,7 +510,7 @@ private:
             const int index = listScroll_ + i;
             const auto& p = library[static_cast<std::size_t>(index)];
             if (ui_.row({x, y + i * rowH, W, rowH - 2.f}, p.name, p.category, index == selected_)) {
-                selected_ = index == selected_ ? -1 : index;
+                select(index == selected_ ? -1 : index);
             }
         }
         if (maxScroll > 0) {  // scrollbar
@@ -484,11 +521,12 @@ private:
         }
         y = listRect_.top + listRect_.height + 8.f;
 
-        if (const gol::Pattern* p = selectedPattern()) {
-            const auto lines = wrap(p->description, W - 20.f, 12);
+        if (!about.empty()) {
+            const auto& lines = about;
             const float boxH = 12.f + 16.f * lines.size();
             ui::fillRoundedRect(window_, {x, y, W, boxH}, 8.f, panel2, border, 1.f);
-            for (std::size_t i = 0; i < lines.size(); ++i) ui_.text({x + 10.f, y + 5.f + 16.f * i}, lines[i], 12, text);
+            for (std::size_t i = 0; i < lines.size(); ++i)
+                ui_.text({x + 10.f, y + 5.f + 16.f * i}, lines[i], 12, i + 1 == lines.size() ? muted : text);
             y += boxH + 10.f;
         }
 
@@ -551,6 +589,8 @@ private:
     std::deque<RateSample> rateSamples_;
 
     int selected_ = -1;
+    int advance_ = 0;                  // generations the selected pattern is advanced before stamping
+    std::vector<gol::Pattern> phases_;  // phases_[g]: the selected pattern after g generations
     int rotation_ = 0;
     bool mirror_ = false;
     int listScroll_ = 0;

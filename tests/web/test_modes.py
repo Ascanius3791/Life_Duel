@@ -25,6 +25,77 @@ PLACE = """(owner) => {
   return S.placements.filter(p => p.owner === owner).length;
 }"""
 
+def cell_xy(page, x, y):
+    """Client coordinates of the centre of board cell (x, y)."""
+    return page.evaluate(f"""(() => {{ const r = canvas.getBoundingClientRect();
+      return [r.left + (view.ox + ({x} + 0.5) * view.cs) / view.dpr, r.top + (view.oy + ({y} + 0.5) * view.cs) / view.dpr]; }})()""")
+
+def test_placing(page):
+    """Advancing a pattern before placing it, and taking single cells out of placed pieces."""
+    page.evaluate("newGame()")
+    page.wait_for_function("S.grey && S.turn === 'red' && S.open === 'red'")
+    page.evaluate("S.grey.fill(0); paintBoard(prepBoard())")  # no grey cells in the way
+    red = lambda: page.evaluate("S.placements.filter(p => p.owner === 'red').map(p => ({ id: p.patternId, free: !!p.free, n: p.cells.length, cost: p.cost, x: p.x, y: p.y, cells: p.cells }))")
+    left = lambda: page.evaluate("remaining('red')")
+    budget = left()
+
+    # A glider one generation on: placed as 5 loose cells. (After 2 it is a
+    # mirrored glider, which is placed as the glider piece.)
+    page.click('#sideRed .card[data-id=glider]')
+    page.mouse.move(*cell_xy(page, 15, 20))
+    page.keyboard.press('Period'); page.keyboard.press('Period'); page.keyboard.press('Comma')
+    assert page.evaluate("S.drag.gen") == 1
+    assert 'generation +1' in page.evaluate("$('#boardHint').textContent")
+    page.mouse.click(*cell_xy(page, 15, 20))
+    # Four generations on it is a glider again: placed as the glider piece.
+    page.keyboard.press('Period'); page.keyboard.press('Period'); page.keyboard.press('Period')
+    page.mouse.click(*cell_xy(page, 15, 40))
+    pl = red()
+    assert [(q['id'], q['free'], q['n']) for q in pl] == [('cell', True, 5), ('glider', False, 5)], pl
+    assert left() == budget - 10
+
+    # The Gosper gun 45 generations on (Shift+. = 10 generations).
+    page.keyboard.press('Escape')
+    page.click('#sideRed .card[data-id=gosper_gun]')
+    page.mouse.move(*cell_xy(page, 25, 80))
+    for _ in range(4): page.keyboard.press('Shift+Period')
+    for _ in range(5): page.keyboard.press('Period')
+    want = page.evaluate("dragPattern().cells.length")
+    assert page.evaluate("S.drag.gen") == 45 and want != 36
+    page.mouse.click(*cell_xy(page, 25, 80))
+    page.keyboard.press('Escape')
+    gun = red()[-1]
+    assert gun['free'] and gun['n'] == want and gun['cost'] == want, gun
+    assert left() == budget - 10 - want
+
+    # Ctrl+right-click takes one cell out of the gun, X one out of the glider piece.
+    cx, cy = gun['cells'][0]
+    page.mouse.move(*cell_xy(page, gun['x'] + cx, gun['y'] + cy))
+    assert 'removes just this cell' in page.evaluate("$('#boardHint').textContent")
+    page.keyboard.down('Control'); page.mouse.click(*cell_xy(page, gun['x'] + cx, gun['y'] + cy), button='right'); page.keyboard.up('Control')
+    assert red()[-1]['n'] == want - 1 and left() == budget - 10 - want + 1
+    glider = red()[1]
+    gx, gy = glider['cells'][2]
+    page.mouse.move(*cell_xy(page, glider['x'] + gx, glider['y'] + gy))
+    page.keyboard.press('x')
+    pl = red()
+    assert (pl[1]['id'], pl[1]['free'], pl[1]['n']) == ('cell', True, 4), pl
+    assert left() == budget - 10 - want + 2
+
+    # The army stores loose cells as `cell` pieces: same cells, same cost, legal.
+    ok = page.evaluate("""(() => { const a = sideArmy('red'); const board = prepBoard(); const { zw } = zones();
+      const cells = []; for (let i = 0; i < board.length; i++) if (board[i] === RED) cells.push(Math.floor(i / S.settings.w) * zw + i % S.settings.w);
+      return [armyProblem(a.pieces, 'red', { width: S.settings.w, height: S.settings.h, budget: S.settings.budget }), a.cost === spent('red'),
+              JSON.stringify(armyCells(a.pieces, zw)) === JSON.stringify(cells.sort((x, y) => x - y))]; })()""")
+    assert ok == [None, True, True], ok
+
+    # A plain right-click still removes the whole (edited) gun.
+    gun = red()[-1]
+    cx, cy = gun['cells'][0]
+    page.mouse.click(*cell_xy(page, gun['x'] + cx, gun['y'] + cy), button='right')
+    assert len(red()) == 2 and left() == budget - 9
+    print('placing: phases and single cells ok')
+
 def finish(page):
     page.evaluate("skipToEnd()")
     page.wait_for_function("S.battle && S.battle.frame.finished && !S.battle.skipping", timeout=120000)
@@ -45,6 +116,7 @@ with sync_playwright() as p:
 
     # 2 players (blind placement: red, then blue)
     page.click('#modeSwitch [data-mode=duo]')
+    test_placing(page)
     page.evaluate("newGame()")
     page.wait_for_function("S.grey")
     n = page.evaluate(PLACE, 'red'); page.evaluate("setReady('red')")

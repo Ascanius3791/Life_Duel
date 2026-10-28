@@ -37,17 +37,20 @@ Nobody gets to act once the battle has started.
 2. Both players get the same number of **points** (default 120).
 3. Buy patterns from your **arsenal** and drop them into your area:
 
+   A pattern costs exactly its living cells:
+
    | Pattern | Cost | | Pattern | Cost |
    |---|---:|---|---|---:|
    | Single cell | 1 | | Glider | 5 |
-   | Block | 3 | | Lightweight spaceship | 9 |
-   | Blinker | 3 | | Middleweight spaceship | 12 |
-   | Beehive | 4 | | Heavyweight spaceship | 15 |
-   | Eater 1 | 6 | | Copperhead | 18 |
-   | R-pentomino | 8 | | Pentadecathlon | 12 |
-   | Diehard | 10 | | Pulsar | 16 |
-   | Acorn | 12 | | Gosper glider gun | 40 |
-   | | | | Simkin glider gun | 40 |
+   | Blinker | 3 | | Lightweight spaceship | 9 |
+   | Block | 4 | | Middleweight spaceship | 11 |
+   | Beehive | 6 | | Heavyweight spaceship | 13 |
+   | Eater 1 | 7 | | Copperhead | 28 |
+   | R-pentomino | 5 | | Pentadecathlon | 12 |
+   | Diehard | 7 | | Pulsar | 48 |
+   | Acorn | 7 | | Gosper glider gun | 36 |
+   | | | | Simkin glider gun | 36 |
+   | | | | Self-assembling glider gun | 21 |
 
    Every moving pattern in the arsenal starts out flying (or shooting) towards
    the opponent: Red's face east, Blue's are mirrored to face west. You can
@@ -147,7 +150,9 @@ generations. In vs Bot and Watch mode both settings can still be changed.
 | Stop placing | `Esc` or right-click |
 | Rotate | `R` / `Shift+R`, the mouse wheel while placing, or ↺ ↻ |
 | Mirror | `F` (left/right) or `V` (up/down), or ⇋ ⇅ |
+| Choose the phase of a pattern | `,` / `.` while placing: one generation back / forward (`Shift`: 10). The pattern evolves on its own, without board edges; it is placed as single cells and costs its living cells |
 | Remove a placed pattern | Right-click it (you get the points back) |
+| Remove a single cell | `Ctrl+right-click` it, or point at it and press `X`: the rest of the pattern stays as single cells, one cell's points come back |
 | Undo last placement | `Ctrl+Z` |
 | Play / pause | `Space` |
 | Single generation | `→` |

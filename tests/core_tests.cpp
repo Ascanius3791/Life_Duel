@@ -81,7 +81,8 @@ static void testClassic() {
     checkSpaceship("copperhead", 10, 1, 0);
 
     // Guns: the population must keep growing period after period.
-    for (auto [id, period] : {std::pair{"gosper_gun", 30}, std::pair{"simkin_gun", 120}}) {
+    for (auto [id, period] : {std::pair{"gosper_gun", 30}, std::pair{"simkin_gun", 120},
+                              std::pair{"self_assembling_gun", 30}}) {
         LifeGrid g(400, 400, false);
         stamp(g, *findPattern(id), 200, 200);
         std::size_t last = 0;
@@ -106,6 +107,71 @@ static void testClassic() {
     CHECK(r.width == 9 && r.height == 36 && r.cells.size() == 36);
     const Pattern back = transformed(transformed(gosper, 2, true), 2, true);
     CHECK(back.cells == gosper.cells);
+
+    // A piece of the battle arsenal costs exactly its live cells.
+    for (const auto& item : battleArsenal()) {
+        const Pattern* p = findPattern(item.patternId);
+        CHECK(p && item.cost == static_cast<int>(p->cells.size()));
+    }
+    CHECK(battleArsenal().size() == 18);
+}
+
+// advanced(): evolution on an unbounded plane, normalised to the bounding box.
+static void testAdvanced() {
+    const Pattern& glider = *findPattern("glider");
+    CHECK(advanced(glider, 0).cells == glider.cells);
+    CHECK(advanced(glider, 4).cells == glider.cells);  // one full period: same shape, moved
+    const Pattern g2 = advanced(glider, 2);
+    CHECK(g2.cells.size() == 5 && g2.cells != glider.cells && g2.width == 3 && g2.height == 3);
+    CHECK(advanced(advanced(glider, 1), 1).cells == g2.cells);
+
+    const Pattern b = advanced(*findPattern("blinker"), 1);
+    CHECK(b.width == 1 && b.height == 3 && b.cells.size() == 3);
+
+    // Diehard vanishes after 130 generations, also without a board around it.
+    const Pattern gone = advanced(*findPattern("diehard"), 130);
+    CHECK(gone.cells.empty() && gone.width == 0 && gone.height == 0);
+    CHECK(advanced(*findPattern("diehard"), 129).cells.size() > 0);
+
+    // Evolution commutes with rotating and mirroring.
+    const Pattern& r = *findPattern("r_pentomino");
+    CHECK(advanced(transformed(r, 1, true), 50).cells == transformed(advanced(r, 50), 1, true).cells);
+
+    // The same as LifeGrid on a board large enough to have no edges.
+    const Pattern& acorn = *findPattern("acorn");
+    LifeGrid g(300, 300, false);
+    stamp(g, acorn, 150, 150);
+    for (int i = 0; i < 200; ++i) g.step();
+    Pattern fromGrid;
+    for (const auto& c : liveCells(g)) fromGrid.cells.push_back(c);
+    CHECK(advanced(transformed(fromGrid, 0, false), 0).cells == advanced(acorn, 200).cells);
+
+    // The self-assembling gun has become a gun by generation 40: from then on
+    // every 30 generations add exactly one glider (5 cells), and the stream
+    // flies south-east like the Gosper gun's.
+    const Pattern& sag = *findPattern("self_assembling_gun");
+    CHECK(sag.cells.size() == 21 && sag.width == 36 && sag.height == 5);
+    Pattern prev = advanced(sag, 90);
+    for (int k = 1; k <= 6; ++k) {
+        const Pattern next = advanced(prev, 30);
+        CHECK(next.cells.size() == prev.cells.size() + 5);
+        CHECK(next.width == prev.width + 7 || next.width == prev.width + 8);
+        CHECK(next.height == prev.height + 7 || next.height == prev.height + 8);
+        prev = next;
+    }
+
+    // The MWSS gun: the population grows period after period while the stream
+    // stays in its rows (it flies straight east).
+    const Pattern& mg = *findPattern("mwss_gun");
+    CHECK(mg.cells.size() == 563 && mg.width == 178 && mg.height == 218);
+    Pattern m = advanced(mg, 165);  // the first MWSS is still inside the gun's box
+    CHECK(m.cells.size() > mg.cells.size());
+    for (int k = 1; k <= 3; ++k) {
+        const Pattern next = advanced(m, 165);
+        CHECK(next.cells.size() > m.cells.size());
+        CHECK(next.height == 218 && next.width > m.width);
+        m = next;
+    }
 }
 
 static std::vector<std::uint8_t> board(int w, int h, std::initializer_list<std::tuple<int, int, Cell>> cells) {
@@ -379,6 +445,7 @@ static void testBattlefieldsArePortable() {
 int main() {
     testBattlefieldsArePortable();
     testClassic();
+    testAdvanced();
     testBattle();
     testFastBattle();
     if (failures == 0) std::printf("All core tests passed.\n");

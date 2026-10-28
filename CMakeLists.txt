@@ -85,6 +85,8 @@ target_include_directories(gol_arena PUBLIC arena)
 target_link_libraries(gol_arena PUBLIC gol_core Threads::Threads)
 add_executable(life_arena arena/main.cpp)
 target_link_libraries(life_arena PRIVATE gol_arena)
+add_executable(life_challenge arena/challenge.cpp)
+target_link_libraries(life_challenge PRIVATE gol_arena)
 
 # --- Tests ------------------------------------------------------------------
 enable_testing()
